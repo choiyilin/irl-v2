@@ -1,5 +1,6 @@
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/providers/AuthProvider';
@@ -7,9 +8,18 @@ import { colors } from '@/src/theme/colors';
 import { typography } from '@/src/theme/typography';
 
 type ChatListItem = {
-  roomId: string;
+  chatId: string;
   partnerName: string;
 };
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
+  return 'Unable to load chats.';
+}
 
 export default function ChatScreen() {
   const { user } = useAuth();
@@ -18,32 +28,38 @@ export default function ChatScreen() {
   const [errorMessage, setErrorMessage] = useState('');
 
   const loadChats = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      setChats([]);
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
     setErrorMessage('');
 
     try {
-      const { data: myMemberships, error: membershipError } = await supabase
-        .from('chat_room_members')
-        .select('room_id')
-        .eq('user_id', user.id);
-      if (membershipError) throw membershipError;
-
-      const roomIds = (myMemberships ?? []).map((row) => row.room_id as string);
-      if (roomIds.length === 0) {
+      const { data: matchRows, error: matchError } = await supabase
+        .from('matches')
+        .select('id, user_a, user_b')
+        .or(`user_a.eq.${user.id},user_b.eq.${user.id}`);
+      if (matchError) throw matchError;
+      if (!matchRows || matchRows.length === 0) {
         setChats([]);
         return;
       }
 
-      const { data: otherMembers, error: otherMembersError } = await supabase
-        .from('chat_room_members')
-        .select('room_id, user_id')
-        .in('room_id', roomIds)
-        .neq('user_id', user.id);
-      if (otherMembersError) throw otherMembersError;
+      const partnerIds = Array.from(
+        new Set(
+          matchRows.map((row) =>
+            (row.user_a as string) === user.id ? (row.user_b as string) : (row.user_a as string),
+          ),
+        ),
+      );
+      if (partnerIds.length === 0) {
+        setChats([]);
+        return;
+      }
 
-      const partnerIds = Array.from(new Set((otherMembers ?? []).map((row) => row.user_id as string)));
       const { data: partnerProfiles, error: profilesError } = await supabase
         .from('profiles')
         .select('id, display_name')
@@ -57,14 +73,25 @@ export default function ChatScreen() {
         ]),
       );
 
-      const items: ChatListItem[] = (otherMembers ?? []).map((member) => ({
-        roomId: member.room_id as string,
-        partnerName: profileById.get(member.user_id as string) ?? 'IRL User',
-      }));
+      const items: ChatListItem[] = matchRows.map((row) => {
+        const otherUserId =
+          (row.user_a as string) === user.id ? (row.user_b as string) : (row.user_a as string);
+        return {
+          chatId: row.id as string,
+          partnerName: profileById.get(otherUserId) ?? 'IRL User',
+        };
+      });
 
-      setChats(items);
+      const uniqueByChat = new Map<string, ChatListItem>();
+      for (const item of items) {
+        if (!uniqueByChat.has(item.chatId)) {
+          uniqueByChat.set(item.chatId, item);
+        }
+      }
+
+      setChats(Array.from(uniqueByChat.values()));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to load chats.');
+      setErrorMessage(getErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -73,6 +100,12 @@ export default function ChatScreen() {
   useEffect(() => {
     loadChats();
   }, [loadChats]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadChats();
+    }, [loadChats]),
+  );
 
   if (isLoading) {
     return (
@@ -92,12 +125,15 @@ export default function ChatScreen() {
           <Text style={styles.cardBody}>
             When two users like each other, a chat is created automatically and listed here.
           </Text>
+          <Pressable style={styles.refreshButton} onPress={loadChats}>
+            <Text style={styles.refreshButtonText}>Refresh chats</Text>
+          </Pressable>
         </View>
       ) : (
         chats.map((chat) => (
-          <View key={chat.roomId} style={styles.card}>
+          <View key={chat.chatId} style={styles.card}>
             <Text style={styles.cardTitle}>{chat.partnerName}</Text>
-            <Text style={styles.cardBody}>Room ID: {chat.roomId}</Text>
+            <Text style={styles.cardBody}>Match ID: {chat.chatId}</Text>
           </View>
         ))
       )}
@@ -145,6 +181,22 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: typography.fontFamily,
     fontSize: 13,
+  },
+  refreshButton: {
+    marginTop: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    minHeight: 42,
+  },
+  refreshButtonText: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

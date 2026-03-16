@@ -100,35 +100,8 @@ export default function ExploreScreen() {
         if (matchError) throw matchError;
         if (!matchRow?.id) throw new Error('Unable to create or find match.');
 
-        const { data: existingRoom, error: existingRoomError } = await supabase
-          .from('chat_rooms')
-          .select('id')
-          .eq('match_id', matchRow.id)
-          .maybeSingle();
-        if (existingRoomError) throw existingRoomError;
-
-        let roomId = existingRoom?.id;
-        if (!roomId) {
-          const { data: createdRoom, error: createRoomError } = await supabase
-            .from('chat_rooms')
-            .insert({ created_by: user.id, match_id: matchRow.id })
-            .select('id')
-            .single();
-          if (createRoomError) throw createRoomError;
-          roomId = createdRoom.id;
-        }
-
-        const { error: memberInsertError } = await supabase.from('chat_room_members').upsert(
-          [
-            { room_id: roomId, user_id: user.id },
-            { room_id: roomId, user_id: activeProfile.id },
-          ],
-          { onConflict: 'room_id,user_id' },
-        );
-        if (memberInsertError) throw memberInsertError;
-
         setMatchMessage(
-          `It's a match with ${activeProfile.display_name ?? 'this user'}! Chat created.`,
+          `It's a match with ${activeProfile.display_name ?? 'this user'}! See them in Chats.`,
         );
       }
 
