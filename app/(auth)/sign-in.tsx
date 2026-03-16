@@ -1,25 +1,34 @@
-import { Link } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Link } from "expo-router";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
-import { useAuth } from '@/src/providers/AuthProvider';
-import { colors } from '@/src/theme/colors';
-import { typography } from '@/src/theme/typography';
+import { useAuth } from "@/src/providers/AuthProvider";
+import { colors } from "@/src/theme/colors";
+import { typography } from "@/src/theme/typography";
 
 export default function SignInScreen() {
   const { signIn, isConfigured } = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSignIn = async () => {
-    setErrorMessage('');
+    setErrorMessage("");
     setIsSubmitting(true);
     try {
       await signIn(email.trim(), password);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to sign in.');
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to sign in.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -28,7 +37,9 @@ export default function SignInScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>In Real Love</Text>
-      <Text style={styles.subtitle}>Sign in to start exploring new connections.</Text>
+      <Text style={styles.subtitle}>
+        Sign in to start exploring new connections.
+      </Text>
       {!isConfigured ? (
         <Text style={styles.warning}>
           Add Supabase env vars in `.env` before authentication will work.
@@ -52,7 +63,11 @@ export default function SignInScreen() {
         onChangeText={setPassword}
       />
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
-      <Pressable style={styles.button} onPress={handleSignIn} disabled={isSubmitting}>
+      <Pressable
+        style={styles.button}
+        onPress={handleSignIn}
+        disabled={isSubmitting}
+      >
         {isSubmitting ? (
           <ActivityIndicator color={colors.text} />
         ) : (
@@ -61,6 +76,9 @@ export default function SignInScreen() {
       </Pressable>
       <Link href="/(auth)/sign-up" style={styles.link}>
         No account yet? Create one
+      </Link>
+      <Link href="/preferences?preview=true" style={styles.linkSecondary}>
+        Preview Preferences screen
       </Link>
     </View>
   );
@@ -71,14 +89,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
     paddingHorizontal: 20,
-    justifyContent: 'center',
+    justifyContent: "center",
     gap: 12,
   },
   title: {
     color: colors.text,
     fontFamily: typography.fontFamily,
     fontSize: 32,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   subtitle: {
     color: colors.mutedText,
@@ -107,25 +125,33 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   button: {
-    alignItems: 'center',
+    alignItems: "center",
     backgroundColor: colors.surface,
     borderRadius: 12,
     minHeight: 48,
-    justifyContent: 'center',
+    justifyContent: "center",
     marginTop: 4,
   },
   buttonText: {
     color: colors.text,
     fontFamily: typography.fontFamily,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   link: {
     color: colors.text,
     fontFamily: typography.fontFamily,
-    textAlign: 'center',
-    textDecorationLine: 'underline',
+    textAlign: "center",
+    textDecorationLine: "underline",
     marginTop: 4,
+  },
+  linkSecondary: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    textAlign: "center",
+    textDecorationLine: "underline",
+    marginTop: 8,
+    fontSize: 14,
   },
   error: {
     color: colors.text,
@@ -133,4 +159,3 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 });
-

@@ -22,6 +22,10 @@ export default function Index() {
   }
 
   if (session) {
+    const hasPreferences = session.user?.user_metadata?.has_completed_preferences === true;
+    if (!hasPreferences) {
+      return <Redirect href="/preferences" />;
+    }
     return <Redirect href="/(tabs)/explore" />;
   }
 
