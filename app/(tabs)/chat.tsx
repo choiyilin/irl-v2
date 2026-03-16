@@ -1,4 +1,4 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -22,6 +22,7 @@ function getErrorMessage(error: unknown) {
 }
 
 export default function ChatScreen() {
+  const router = useRouter();
   const { user } = useAuth();
   const [chats, setChats] = useState<ChatListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -104,8 +105,56 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       loadChats();
+      const timer = setInterval(() => {
+        loadChats();
+      }, 3000);
+
+      return () => {
+        clearInterval(timer);
+      };
     }, [loadChats]),
   );
+
+  useEffect(() => {
+    if (!user) return;
+
+    const channelForUserA = supabase
+      .channel(`matches-user-a-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'matches',
+          filter: `user_a=eq.${user.id}`,
+        },
+        () => {
+          loadChats();
+        },
+      )
+      .subscribe();
+
+    const channelForUserB = supabase
+      .channel(`matches-user-b-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'matches',
+          filter: `user_b=eq.${user.id}`,
+        },
+        () => {
+          loadChats();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channelForUserA);
+      supabase.removeChannel(channelForUserB);
+    };
+  }, [loadChats, user]);
 
   if (isLoading) {
     return (
@@ -131,10 +180,14 @@ export default function ChatScreen() {
         </View>
       ) : (
         chats.map((chat) => (
-          <View key={chat.chatId} style={styles.card}>
+          <Pressable
+            key={chat.chatId}
+            style={styles.card}
+            onPress={() => router.push(`/chat/${chat.chatId}` as never)}>
             <Text style={styles.cardTitle}>{chat.partnerName}</Text>
             <Text style={styles.cardBody}>Match ID: {chat.chatId}</Text>
-          </View>
+            <Text style={styles.openText}>Open chat</Text>
+          </Pressable>
         ))
       )}
     </View>
@@ -181,6 +234,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: typography.fontFamily,
     fontSize: 13,
+  },
+  openText: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 13,
+    textDecorationLine: 'underline',
   },
   refreshButton: {
     marginTop: 6,
