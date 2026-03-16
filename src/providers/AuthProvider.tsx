@@ -16,6 +16,24 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+async function ensureProfileExists(user: User) {
+  const fallbackName = user.email?.split('@')[0] ?? 'IRL User';
+  const { error } = await supabase.from('profiles').upsert(
+    {
+      id: user.id,
+      display_name: fallbackName,
+    },
+    {
+      onConflict: 'id',
+      ignoreDuplicates: true,
+    },
+  );
+
+  if (error) {
+    console.error('Failed to ensure profile row exists:', error.message);
+  }
+}
+
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -32,6 +50,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setSession(data.session ?? null);
         setIsLoading(false);
       }
+      if (data.session?.user) {
+        await ensureProfileExists(data.session.user);
+      }
     };
 
     loadSession();
@@ -41,6 +62,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       setIsLoading(false);
+      if (nextSession?.user) {
+        ensureProfileExists(nextSession.user);
+      }
     });
 
     return () => {
