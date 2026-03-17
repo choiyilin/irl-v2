@@ -77,8 +77,8 @@ export default function SignInScreen() {
       <Link href="/(auth)/sign-up" style={styles.link}>
         No account yet? Create one
       </Link>
-      <Link href="/preferences?preview=true" style={styles.linkSecondary}>
-        Preview Preferences screen
+      <Link href="/photos?preview=true" style={styles.linkSecondary}>
+        Preview onboarding (photos & preferences)
       </Link>
     </View>
   );

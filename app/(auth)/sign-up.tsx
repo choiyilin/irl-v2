@@ -89,8 +89,7 @@ export default function SignUpScreen() {
     return age;
   };
 
-  const isUnder18 =
-    dateOfBirth !== null && calculateAge(dateOfBirth) < 18;
+  const isUnder18 = dateOfBirth !== null && calculateAge(dateOfBirth) < 18;
 
   const handleSignUp = async () => {
     setErrorMessage("");
@@ -190,9 +189,7 @@ export default function SignUpScreen() {
         </Pressable>
       </View>
       {isUnder18 ? (
-        <Text style={styles.ageError}>
-          You must be 18 or older to sign up.
-        </Text>
+        <Text style={styles.ageError}>You must be 18 or older to sign up.</Text>
       ) : null}
 
       {showDatePicker && (

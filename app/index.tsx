@@ -22,6 +22,17 @@ export default function Index() {
   }
 
   if (session) {
+    const hasUploadedPhotos = session.user?.user_metadata?.has_uploaded_photos === true;
+    const hasPreferences = session.user?.user_metadata?.has_completed_preferences === true;
+
+    if (!hasUploadedPhotos) {
+      return <Redirect href="/photos" />;
+    }
+
+    if (!hasPreferences) {
+      return <Redirect href="/preferences" />;
+    }
+
     return <Redirect href="/(tabs)/explore" />;
   }
 
