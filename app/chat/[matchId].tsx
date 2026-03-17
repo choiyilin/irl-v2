@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/providers/AuthProvider';
@@ -25,9 +26,26 @@ type ChatMessage = {
   created_at: string;
 };
 
+function areMessagesEqual(current: ChatMessage[], next: ChatMessage[]) {
+  if (current.length !== next.length) {
+    return false;
+  }
+
+  return current.every((message, index) => {
+    const candidate = next[index];
+    return (
+      message.id === candidate.id &&
+      message.sender_id === candidate.sender_id &&
+      message.body === candidate.body &&
+      message.created_at === candidate.created_at
+    );
+  });
+}
+
 export default function MatchChatScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ matchId?: string | string[] }>();
   const matchId = useMemo(
     () => (Array.isArray(params.matchId) ? params.matchId[0] : params.matchId),
@@ -49,7 +67,10 @@ export default function MatchChatScreen() {
       .eq('room_id', roomId)
       .order('created_at', { ascending: true });
     if (error) throw error;
-    setMessages((data ?? []) as ChatMessage[]);
+    const nextMessages = (data ?? []) as ChatMessage[];
+    setMessages((currentMessages) =>
+      areMessagesEqual(currentMessages, nextMessages) ? currentMessages : nextMessages,
+    );
   }, [roomId]);
 
   useEffect(() => {
@@ -111,20 +132,6 @@ export default function MatchChatScreen() {
     };
   }, [loadMessages, roomId]);
 
-  useEffect(() => {
-    if (!roomId) return;
-
-    const timer = setInterval(() => {
-      loadMessages().catch((error) => {
-        setErrorMessage(error instanceof Error ? error.message : 'Unable to sync messages.');
-      });
-    }, 2000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [loadMessages, roomId]);
-
   const sendMessage = async () => {
     if (!roomId || !user || !draft.trim()) return;
 
@@ -149,54 +156,61 @@ export default function MatchChatScreen() {
 
   if (isLoading) {
     return (
-      <View style={[styles.container, styles.center]}>
+      <SafeAreaView style={[styles.safeArea, styles.center]} edges={['top', 'bottom']}>
         <ActivityIndicator color={colors.text} />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={styles.container}>
-      <View style={styles.headerRow}>
-        <Pressable style={styles.backButton} onPress={() => router.push('/(tabs)/chat')}>
-          <Ionicons name="arrow-back" size={18} color={colors.text} />
-        </Pressable>
-        <Text style={styles.title}>Match Chat</Text>
-      </View>
-      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => {
-          const mine = item.sender_id === user?.id;
-          return (
-            <View style={[styles.messageBubble, mine ? styles.mine : styles.theirs]}>
-              <Text style={styles.messageText}>{item.body}</Text>
-            </View>
-          );
-        }}
-        ListEmptyComponent={<Text style={styles.emptyText}>No messages yet. Say hi.</Text>}
-      />
-      <View style={styles.inputRow}>
-        <TextInput
-          placeholder="Type a message"
-          placeholderTextColor={colors.mutedText}
-          value={draft}
-          onChangeText={setDraft}
-          style={styles.input}
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+        style={styles.container}>
+        <View style={styles.headerRow}>
+          <Pressable style={styles.backButton} onPress={() => router.push('/(tabs)/chat')}>
+            <Ionicons name="arrow-back" size={18} color={colors.text} />
+          </Pressable>
+          <Text style={styles.title}>Match Chat</Text>
+        </View>
+        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => {
+            const mine = item.sender_id === user?.id;
+            return (
+              <View style={[styles.messageBubble, mine ? styles.mine : styles.theirs]}>
+                <Text style={styles.messageText}>{item.body}</Text>
+              </View>
+            );
+          }}
+          ListEmptyComponent={<Text style={styles.emptyText}>No messages yet. Say hi.</Text>}
         />
-        <Pressable style={[styles.sendButton, isSending && styles.disabled]} onPress={sendMessage}>
-          <Text style={styles.sendButtonText}>{isSending ? '...' : 'Send'}</Text>
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+        <View style={styles.inputRow}>
+          <TextInput
+            placeholder="Type a message"
+            placeholderTextColor={colors.mutedText}
+            value={draft}
+            onChangeText={setDraft}
+            style={styles.input}
+          />
+          <Pressable style={[styles.sendButton, isSending && styles.disabled]} onPress={sendMessage}>
+            <Text style={styles.sendButtonText}>{isSending ? '...' : 'Send'}</Text>
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.background,

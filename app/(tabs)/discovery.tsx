@@ -31,7 +31,7 @@ const SCREEN_HEIGHT = Dimensions.get('window').height;
 const SHEET_MAX_HEIGHT = Math.max(340, Math.min(520, SCREEN_HEIGHT * 0.55));
 const SHEET_MIN_HEIGHT = 170;
 const SHEET_COLLAPSED_OFFSET = SHEET_MAX_HEIGHT - SHEET_MIN_HEIGHT;
-const FILTER_OPTIONS = ['All', 'Club', 'Restaurant', 'Bar'] as const;
+const FILTER_OPTIONS = ['All', 'Bars', 'Clubs', 'Restaurants'] as const;
 
 const getPromoBadgeLabel = (description: string): string => {
   const percentMatch = description.match(/(\d{1,2})\s?%/);
@@ -137,8 +137,13 @@ export default function DiscoveryScreen(): React.JSX.Element {
     return visiblePromotions.filter((promotion) => {
       if (selectedCategory !== 'All') {
         const normalizedCategory = promotion.category.toLowerCase();
-        const selected = selectedCategory.toLowerCase();
-        const matchesCategory = normalizedCategory.includes(selected);
+        const selectedKeyword =
+          selectedCategory === 'Bars'
+            ? 'bar'
+            : selectedCategory === 'Clubs'
+              ? 'club'
+              : 'restaurant';
+        const matchesCategory = normalizedCategory.includes(selectedKeyword);
         if (!matchesCategory) {
           return false;
         }
@@ -160,46 +165,6 @@ export default function DiscoveryScreen(): React.JSX.Element {
       return searchable.includes(normalizedQuery);
     });
   }, [searchQuery, selectedCategory, visiblePromotions]);
-
-  const showClubFilter = useMemo(
-    () => promotions.some((promotion) => promotion.category.toLowerCase().includes('club')),
-    [promotions],
-  );
-  const showRestaurantFilter = useMemo(
-    () => promotions.some((promotion) => promotion.category.toLowerCase().includes('restaurant')),
-    [promotions],
-  );
-  const showBarFilter = useMemo(
-    () => promotions.some((promotion) => promotion.category.toLowerCase().includes('bar')),
-    [promotions],
-  );
-
-  const availableFilters = useMemo(
-    () =>
-      FILTER_OPTIONS.filter((filter) => {
-        if (filter === 'All') {
-          return true;
-        }
-        if (filter === 'Club') {
-          return showClubFilter;
-        }
-        if (filter === 'Restaurant') {
-          return showRestaurantFilter;
-        }
-        if (filter === 'Bar') {
-          return showBarFilter;
-        }
-
-        return false;
-      }),
-    [showBarFilter, showClubFilter, showRestaurantFilter],
-  );
-
-  useEffect(() => {
-    if (!availableFilters.includes(selectedCategory)) {
-      setSelectedCategory('All');
-    }
-  }, [availableFilters, selectedCategory]);
 
   const selectedPromotion = useMemo(
     () => promotions.find((promotion) => promotion.id === selectedPromotionId) ?? null,
@@ -285,7 +250,7 @@ export default function DiscoveryScreen(): React.JSX.Element {
             </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsContent}>
-              {availableFilters.map((category) => {
+              {FILTER_OPTIONS.map((category) => {
                 const isSelected = category === selectedCategory;
                 return (
                   <Pressable
@@ -304,7 +269,7 @@ export default function DiscoveryScreen(): React.JSX.Element {
             {...panResponder.panHandlers}>
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Restaurants in view</Text>
+              <Text style={styles.sheetTitle}>Venues in view</Text>
               <View style={styles.counterPill}>
                 <Text style={styles.counterText}>{filteredVisiblePromotions.length}</Text>
               </View>

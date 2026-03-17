@@ -105,13 +105,7 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       loadChats();
-      const timer = setInterval(() => {
-        loadChats();
-      }, 3000);
-
-      return () => {
-        clearInterval(timer);
-      };
+      return undefined;
     }, [loadChats]),
   );
 
@@ -166,7 +160,6 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Live Chat</Text>
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       {chats.length === 0 ? (
         <View style={styles.card}>
@@ -204,12 +197,6 @@ const styles = StyleSheet.create({
   center: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  title: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 28,
-    fontWeight: '700',
   },
   card: {
     backgroundColor: colors.surface,
