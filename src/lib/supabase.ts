@@ -7,7 +7,8 @@ import { env } from '@/src/config/env';
 
 const fallbackUrl = 'https://example.supabase.co';
 const fallbackAnonKey = 'public-anon-key';
-const isBrowserRuntime = typeof window !== 'undefined';
+// We intentionally do NOT persist sessions so the app always starts on Sign In.
+// Session lives only in-memory for the current app run.
 
 if (!env.isSupabaseConfigured) {
   console.warn(
@@ -20,9 +21,9 @@ export const supabase = createClient(
   env.supabaseAnonKey ?? fallbackAnonKey,
   {
     auth: {
-      storage: isBrowserRuntime ? AsyncStorage : undefined,
-      autoRefreshToken: isBrowserRuntime,
-      persistSession: isBrowserRuntime,
+      storage: AsyncStorage,
+      autoRefreshToken: false,
+      persistSession: false,
       detectSessionInUrl: false,
     },
   },

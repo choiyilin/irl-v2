@@ -1,4 +1,4 @@
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -15,6 +15,7 @@ import { typography } from "@/src/theme/typography";
 
 export default function SignInScreen() {
   const { signIn, isConfigured } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -25,6 +26,7 @@ export default function SignInScreen() {
     setIsSubmitting(true);
     try {
       await signIn(email.trim(), password);
+      router.replace("/");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Unable to sign in.",

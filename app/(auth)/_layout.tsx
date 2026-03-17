@@ -1,11 +1,11 @@
-import { Stack } from 'expo-router';
+import { Redirect, Stack } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 
 import { useAuth } from '@/src/providers/AuthProvider';
 import { colors } from '@/src/theme/colors';
 
 export default function AuthLayout() {
-  const { isLoading } = useAuth();
+  const { isLoading, session } = useAuth();
 
   if (isLoading) {
     return (
@@ -19,6 +19,12 @@ export default function AuthLayout() {
         <ActivityIndicator color={colors.text} />
       </View>
     );
+  }
+
+  if (session) {
+    // If user is already signed in, send them through the root index routing
+    // (which decides tabs vs onboarding) instead of keeping them on auth screens.
+    return <Redirect href="/" />;
   }
 
   return (
