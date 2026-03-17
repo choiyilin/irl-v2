@@ -11,10 +11,10 @@ import {
   View,
 } from "react-native";
 
+import { supabase } from "@/src/lib/supabase";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { colors } from "@/src/theme/colors";
 import { typography } from "@/src/theme/typography";
-import { supabase } from "@/src/lib/supabase";
 
 const PHOTO_SLOTS = [1, 2, 3, 4, 5, 6];
 const STORAGE_BUCKET = "profile-photos";
@@ -28,7 +28,11 @@ function getErrorMessage(error: unknown) {
   return "Could not save photos step.";
 }
 
-async function uploadPhotoToSupabase(uri: string, userId: string, slotIndex: number) {
+async function uploadPhotoToSupabase(
+  uri: string,
+  userId: string,
+  slotIndex: number,
+) {
   const response = await fetch(uri);
   const blob = await response.blob();
 
@@ -52,15 +56,20 @@ async function uploadPhotoToSupabase(uri: string, userId: string, slotIndex: num
 export default function PhotosScreen() {
   const { session } = useAuth();
   const router = useRouter();
-  const [photos, setPhotos] = useState<(string | null)[]>(PHOTO_SLOTS.map(() => null));
+  const [photos, setPhotos] = useState<(string | null)[]>(
+    PHOTO_SLOTS.map(() => null),
+  );
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        setErrorMessage("We need access to your photos to let you add pictures.");
+        setErrorMessage(
+          "We need access to your photos to let you add pictures.",
+        );
       }
     })();
   }, []);
@@ -137,7 +146,7 @@ export default function PhotosScreen() {
       });
       if (metaError) throw new Error(metaError.message);
 
-      router.replace("/preferences");
+      router.replace("/(tabs)/explore");
     } catch (e) {
       setErrorMessage(getErrorMessage(e));
     } finally {
@@ -153,8 +162,7 @@ export default function PhotosScreen() {
     >
       <Text style={styles.title}>Add photos</Text>
       <Text style={styles.subtitle}>
-        Choose six photos that best represent you. You can fine-tune them
-        later.
+        Choose six photos that best represent you. You can fine-tune them later.
       </Text>
 
       <View style={styles.grid}>
@@ -302,4 +310,3 @@ const styles = StyleSheet.create({
     marginTop: -8,
   },
 });
-

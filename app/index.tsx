@@ -1,8 +1,8 @@
-import { Redirect } from 'expo-router';
-import { ActivityIndicator, View } from 'react-native';
+import { Redirect } from "expo-router";
+import { ActivityIndicator, View } from "react-native";
 
-import { useAuth } from '@/src/providers/AuthProvider';
-import { colors } from '@/src/theme/colors';
+import { useAuth } from "@/src/providers/AuthProvider";
+import { colors } from "@/src/theme/colors";
 
 export default function Index() {
   const { isLoading, session } = useAuth();
@@ -12,18 +12,27 @@ export default function Index() {
       <View
         style={{
           flex: 1,
-          alignItems: 'center',
-          justifyContent: 'center',
+          alignItems: "center",
+          justifyContent: "center",
           backgroundColor: colors.background,
-        }}>
+        }}
+      >
         <ActivityIndicator color={colors.text} />
       </View>
     );
   }
 
   if (session) {
-    const hasUploadedPhotos = session.user?.user_metadata?.has_uploaded_photos === true;
-    const hasPreferences = session.user?.user_metadata?.has_completed_preferences === true;
+    const hasCompletedSignupProfile =
+      session.user?.user_metadata?.has_completed_signup_profile === true;
+    const hasUploadedPhotos =
+      session.user?.user_metadata?.has_uploaded_photos === true;
+    const hasPreferences =
+      session.user?.user_metadata?.has_completed_preferences === true;
+
+    if (!hasCompletedSignupProfile) {
+      return <Redirect href="/(auth)/sign-up" />;
+    }
 
     if (!hasUploadedPhotos) {
       return <Redirect href="/photos" />;
@@ -38,4 +47,3 @@ export default function Index() {
 
   return <Redirect href="/(auth)/sign-in" />;
 }
-

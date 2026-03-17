@@ -1,33 +1,71 @@
-import DateTimePicker from "@react-native-community/datetimepicker";
-import { Link } from "expo-router";
-import { useState } from "react";
+import { Link, useRouter } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import * as Linking from "expo-linking";
 
 import { useAuth } from "@/src/providers/AuthProvider";
+import { supabase } from "@/src/lib/supabase";
 import { colors } from "@/src/theme/colors";
 import { typography } from "@/src/theme/typography";
 
+type Step = "name" | "email" | "verifyEmail" | "dob" | "gender" | "password";
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function formatDobInput(text: string) {
+  const digits = text.replace(/[^\d]/g, "").slice(0, 8); // MMDDYYYY
+  const mm = digits.slice(0, 2);
+  const dd = digits.slice(2, 4);
+  const yyyy = digits.slice(4, 8);
+  if (digits.length <= 2) return mm;
+  if (digits.length <= 4) return `${mm}/${dd}`;
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+function parseDob(text: string): Date | null {
+  const cleaned = text.trim();
+  const parts = cleaned.split("/");
+  if (parts.length !== 3) return null;
+  const month = parseInt(parts[0], 10) - 1;
+  const day = parseInt(parts[1], 10);
+  const year = parseInt(parts[2], 10);
+  if (isNaN(month) || isNaN(day) || isNaN(year)) return null;
+  if (month < 0 || month > 11) return null;
+  if (day < 1 || day > 31) return null;
+  if (year < 1950 || year > new Date().getFullYear()) return null;
+  const date = new Date(year, month, day);
+  if (date.getMonth() !== month || date.getDate() !== day || date.getFullYear() !== year) {
+    return null;
+  }
+  return date;
+}
+
 export default function SignUpScreen() {
-  const { signUp, isConfigured } = useAuth();
+  const { signIn, isConfigured, session } = useAuth();
+  const router = useRouter();
+  const [step, setStep] = useState<Step>("name");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState<string>("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState<Date | null>(null);
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [gender, setGender] = useState("");
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   const GENDER_OPTIONS = [
     "Man",
@@ -35,46 +73,6 @@ export default function SignUpScreen() {
     "Non-binary",
     "Prefer to self-describe",
   ];
-
-  const formatDate = (date: Date) => {
-    const month = (date.getMonth() + 1).toString().padStart(2, "0");
-    const day = date.getDate().toString().padStart(2, "0");
-    const year = date.getFullYear();
-    return `${month}/${day}/${year}`;
-  };
-
-  const parseDateInput = (text: string): Date | null => {
-    const cleaned = text.trim().replace(/-/g, "/");
-    const parts = cleaned.split("/");
-    if (parts.length !== 3) return null;
-    const month = parseInt(parts[0], 10) - 1;
-    const day = parseInt(parts[1], 10);
-    const year = parseInt(parts[2], 10);
-    if (isNaN(month) || isNaN(day) || isNaN(year)) return null;
-    if (
-      month < 0 ||
-      month > 11 ||
-      day < 1 ||
-      day > 31 ||
-      year < 1950 ||
-      year > new Date().getFullYear()
-    )
-      return null;
-    const date = new Date(year, month, day);
-    if (
-      date.getMonth() !== month ||
-      date.getDate() !== day ||
-      date.getFullYear() !== year
-    )
-      return null;
-    return date;
-  };
-
-  const handleDateInputChange = (text: string) => {
-    setDateOfBirthInput(text);
-    const parsed = parseDateInput(text);
-    setDateOfBirth(parsed);
-  };
 
   const calculateAge = (birthDate: Date) => {
     const today = new Date();
@@ -91,30 +89,79 @@ export default function SignUpScreen() {
 
   const isUnder18 = dateOfBirth !== null && calculateAge(dateOfBirth) < 18;
 
-  const handleSignUp = async () => {
-    setErrorMessage("");
+  const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
+  const emailRedirectTo = useMemo(() => Linking.createURL("/"), []);
 
-    if (!firstName.trim()) {
-      setErrorMessage("Please enter your first name.");
+  const generateTemporaryPassword = () => {
+    // Supabase requires a password on sign-up, but we collect the user's chosen
+    // password later. This temp password is only used until the user sets theirs.
+    const rand = Math.random().toString(36).slice(2);
+    return `tmp_${Date.now()}_${rand}_A1!`;
+  };
+
+  const goNext = async () => {
+    setErrorMessage("");
+    setInfoMessage("");
+
+    if (step === "name") {
+      if (!firstName.trim()) return setErrorMessage("Please enter your first name.");
+      if (!lastName.trim()) return setErrorMessage("Please enter your last name.");
+      setStep("email");
       return;
     }
-    if (!lastName.trim()) {
-      setErrorMessage("Please enter your last name.");
+
+    if (step === "email") {
+      if (!normalizedEmail) return setErrorMessage("Please enter your email.");
+      setEmail(normalizedEmail);
+      // Create the auth user now so Supabase can send the verification email.
+      const tmp = generateTemporaryPassword();
+      setTemporaryPassword(tmp);
+      setIsSubmitting(true);
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password: tmp,
+          options: { emailRedirectTo },
+        });
+        if (error) throw error;
+
+        // If email confirmations are disabled in Supabase, a session will be returned immediately.
+        if (data.session) {
+          setInfoMessage("Email verification is not required. Continuing…");
+          setStep("dob");
+          return;
+        }
+
+        setInfoMessage("Verification email sent. Please check your inbox.");
+        setStep("verifyEmail");
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Unable to sign up.");
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
-    if (!dateOfBirth) {
-      setErrorMessage("Please enter your date of birth (MM/DD/YYYY).");
+
+    if (step === "dob") {
+      const parsed = parseDob(dateOfBirthInput);
+      if (!parsed) return setErrorMessage("Please enter your date of birth (MM/DD/YYYY).");
+      const age = calculateAge(parsed);
+      if (age < 18) return setErrorMessage("You must be at least 18 years old to sign up.");
+      setDateOfBirth(parsed);
+      setStep("gender");
       return;
     }
-    const age = calculateAge(dateOfBirth);
-    if (age < 18) {
-      setErrorMessage("You must be at least 18 years old to sign up.");
+
+    if (step === "gender") {
+      if (!gender.trim()) {
+        setErrorMessage("Please select your gender.");
+        return;
+      }
+      setStep("password");
       return;
     }
-    if (!email.trim()) {
-      setErrorMessage("Please enter your email.");
-      return;
-    }
+
+    // password (finalize account details)
     if (!password.trim() || password.length < 6) {
       setErrorMessage("Password must be at least 6 characters.");
       return;
@@ -123,26 +170,123 @@ export default function SignUpScreen() {
       setErrorMessage("Passwords do not match.");
       return;
     }
-    if (!gender.trim()) {
-      setErrorMessage("Please select your gender.");
+
+      if (!session) {
+        setErrorMessage("Please verify your email first.");
+        return;
+      }
+
+      setIsSubmitting(true);
+      try {
+        const { error: passwordError } = await supabase.auth.updateUser({
+          password,
+        });
+        if (passwordError) throw passwordError;
+
+        const { error } = await supabase.auth.updateUser({
+          data: {
+            has_completed_signup_profile: true,
+            first_name: firstName.trim(),
+            last_name: lastName.trim(),
+            date_of_birth: formatDobInput(dateOfBirthInput),
+            gender: gender.trim(),
+          },
+        });
+        if (error) throw error;
+        router.replace("/photos");
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : "Could not save profile details.");
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+  };
+
+  const goBack = () => {
+    setErrorMessage("");
+    setStep((prev) => {
+      if (prev === "email") return "name";
+      if (prev === "verifyEmail") return "email";
+      if (prev === "dob") return "verifyEmail";
+      if (prev === "gender") return "dob";
+      if (prev === "password") return "gender";
+      return prev;
+    });
+  };
+
+  const handleBackPress = () => {
+    if (step === "name") {
+      router.back();
       return;
     }
+    goBack();
+  };
 
-    setIsSubmitting(true);
+  const isContinueDisabled =
+    isSubmitting ||
+    (step === "name" && (!firstName.trim() || !lastName.trim())) ||
+    (step === "email" && !normalizedEmail) ||
+    (step === "dob" && dateOfBirthInput.trim().length < 10) ||
+    (step === "gender" && !gender.trim()) ||
+    (step === "password" && (!password || !confirmPassword));
+
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    let isCancelled = false;
+
+    const startPolling = () => {
+      if (interval) return;
+      interval = setInterval(async () => {
+        if (isCancelled) return;
+        if (!normalizedEmail || !temporaryPassword) return;
+        try {
+          await signIn(normalizedEmail, temporaryPassword);
+          if (isCancelled) return;
+          setStep("dob");
+        } catch {
+          // Still not verified / cannot sign in yet
+        }
+      }, 4000);
+    };
+
+    if (step === "verifyEmail") {
+      setIsVerifying(true);
+      startPolling();
+    } else {
+      setIsVerifying(false);
+    }
+
+    return () => {
+      isCancelled = true;
+      if (interval) clearInterval(interval);
+    };
+  }, [normalizedEmail, signIn, step, temporaryPassword]);
+
+  const resendVerificationEmail = async () => {
+    setErrorMessage("");
+    setInfoMessage("");
+    if (!normalizedEmail) {
+      setErrorMessage("Missing email.");
+      return;
+    }
     try {
-      await signUp(email.trim(), password);
-      setErrorMessage("Check your email to confirm your account.");
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Unable to sign up.",
-      );
-    } finally {
-      setIsSubmitting(false);
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: normalizedEmail,
+        options: { emailRedirectTo },
+      });
+      if (error) throw error;
+      setInfoMessage("Verification email resent.");
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : "Could not resend verification email.");
     }
   };
 
   return (
     <View style={styles.container}>
+      <Pressable onPress={handleBackPress} style={styles.backCircleFloating}>
+        <Text style={styles.backCircleIcon}>←</Text>
+      </Pressable>
       <Text style={styles.title}>Create Account</Text>
       <Text style={styles.subtitle}>
         Join IRL and plan meaningful dates in real life.
@@ -153,146 +297,166 @@ export default function SignUpScreen() {
         </Text>
       ) : null}
 
-      <View style={styles.nameRow}>
-        <TextInput
-          autoCapitalize="words"
-          placeholder="First name"
-          placeholderTextColor={colors.mutedText}
-          style={[styles.input, styles.nameInput]}
-          value={firstName}
-          onChangeText={setFirstName}
-        />
-        <TextInput
-          autoCapitalize="words"
-          placeholder="Last name"
-          placeholderTextColor={colors.mutedText}
-          style={[styles.input, styles.nameInput]}
-          value={lastName}
-          onChangeText={setLastName}
-        />
+      <View style={styles.stepHeaderRow}>
+        <Text style={styles.stepText}>
+          {step === "name"
+            ? "Name"
+            : step === "email"
+              ? "Email"
+              : step === "verifyEmail"
+                ? "Verify email"
+                : step === "dob"
+                  ? "Birth date"
+                  : step === "gender"
+                    ? "Gender"
+                    : "Password"}
+        </Text>
       </View>
 
-      <View style={styles.dateRow}>
-        <TextInput
-          placeholder="Date of birth (MM/DD/YYYY)"
-          placeholderTextColor={colors.mutedText}
-          style={[styles.input, styles.dateInput]}
-          value={dateOfBirthInput}
-          onChangeText={handleDateInputChange}
-          keyboardType="numbers-and-punctuation"
-        />
-        <Pressable
-          style={styles.datePickerButton}
-          onPress={() => setShowDatePicker(true)}
-        >
-          <Text style={styles.datePickerButtonText}>📅</Text>
-        </Pressable>
-      </View>
-      {isUnder18 ? (
-        <Text style={styles.ageError}>You must be 18 or older to sign up.</Text>
+      {step === "name" ? (
+        <View style={styles.nameRow}>
+          <TextInput
+            autoCapitalize="words"
+            placeholder="First name"
+            placeholderTextColor={colors.mutedText}
+            style={[styles.input, styles.nameInput]}
+            value={firstName}
+            onChangeText={setFirstName}
+          />
+          <TextInput
+            autoCapitalize="words"
+            placeholder="Last name"
+            placeholderTextColor={colors.mutedText}
+            style={[styles.input, styles.nameInput]}
+            value={lastName}
+            onChangeText={setLastName}
+          />
+        </View>
       ) : null}
 
-      {showDatePicker && (
-        <DateTimePicker
-          value={dateOfBirth ?? new Date(2000, 0, 1)}
-          mode="date"
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          maximumDate={new Date()}
-          minimumDate={new Date(1950, 0, 1)}
-          onChange={(event: any, selectedDate?: Date) => {
-            setShowDatePicker(Platform.OS === "ios");
-            if (selectedDate) {
-              setDateOfBirth(selectedDate);
-              setDateOfBirthInput(formatDate(selectedDate));
-            }
-          }}
+      {step === "email" ? (
+        <TextInput
+          autoCapitalize="none"
+          keyboardType="email-address"
+          placeholder="Email"
+          placeholderTextColor={colors.mutedText}
+          style={styles.input}
+          value={email}
+          onChangeText={setEmail}
         />
-      )}
+      ) : null}
 
-      <Text style={styles.label}>Gender</Text>
-      <View style={styles.genderRow}>
-        {GENDER_OPTIONS.map((option) => (
-          <Pressable
-            key={option}
-            style={[
-              styles.genderChip,
-              gender === option && styles.genderChipSelected,
-            ]}
-            onPress={() => setGender(option)}
-          >
-            <Text
-              style={[
-                styles.genderChipText,
-                gender === option && styles.genderChipTextSelected,
-              ]}
-            >
-              {option}
-            </Text>
+      {step === "verifyEmail" ? (
+        <View style={{ gap: 12 }}>
+          <Text style={styles.verifyTitle}>Check your email</Text>
+          <Text style={styles.verifyBody}>
+            We sent a verification link to{" "}
+            <Text style={styles.verifyEmail}>{normalizedEmail}</Text>. Once you
+            verify your email, we’ll automatically continue.
+          </Text>
+          {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
+          {isVerifying ? (
+            <View style={styles.verifySpinnerRow}>
+              <ActivityIndicator color={colors.text} />
+              <Text style={styles.verifyWaitingText}>Waiting for verification…</Text>
+            </View>
+          ) : null}
+          <Pressable onPress={resendVerificationEmail} style={styles.resendButton}>
+            <Text style={styles.resendButtonText}>Resend email</Text>
           </Pressable>
-        ))}
-      </View>
+        </View>
+      ) : null}
 
-      <TextInput
-        autoCapitalize="none"
-        keyboardType="email-address"
-        placeholder="Email"
-        placeholderTextColor={colors.mutedText}
-        style={styles.input}
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        secureTextEntry
-        placeholder="Password"
-        placeholderTextColor={colors.mutedText}
-        style={styles.input}
-        value={password}
-        onChangeText={setPassword}
-      />
-      <TextInput
-        secureTextEntry
-        placeholder="Confirm password"
-        placeholderTextColor={colors.mutedText}
-        style={styles.input}
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-      />
+      {step === "dob" ? (
+        <View>
+          <TextInput
+            placeholder="Birth date (MM/DD/YYYY)"
+            placeholderTextColor={colors.mutedText}
+            style={styles.input}
+            value={dateOfBirthInput}
+            onChangeText={(t) => {
+              const formatted = formatDobInput(t);
+              setDateOfBirthInput(formatted);
+              setDateOfBirth(parseDob(formatted));
+            }}
+            keyboardType="number-pad"
+            maxLength={10}
+          />
+          {isUnder18 ? (
+            <Text style={styles.ageError}>
+              You must be 18 or older to sign up.
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {step === "gender" ? (
+        <View style={{ gap: 12 }}>
+          <Text style={styles.label}>Gender</Text>
+          <View style={styles.genderRow}>
+            {GENDER_OPTIONS.map((option) => (
+              <Pressable
+                key={option}
+                style={[
+                  styles.genderChip,
+                  gender === option && styles.genderChipSelected,
+                ]}
+                onPress={() => setGender(option)}
+              >
+                <Text
+                  style={[
+                    styles.genderChipText,
+                    gender === option && styles.genderChipTextSelected,
+                  ]}
+                >
+                  {option}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {step === "password" ? (
+        <View style={{ gap: 12 }}>
+          <TextInput
+            secureTextEntry
+            placeholder="Password"
+            placeholderTextColor={colors.mutedText}
+            style={styles.input}
+            value={password}
+            onChangeText={setPassword}
+          />
+          <TextInput
+            secureTextEntry
+            placeholder="Confirm password"
+            placeholderTextColor={colors.mutedText}
+            style={styles.input}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+          />
+        </View>
+      ) : null}
+
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
-      <Pressable
-        style={[
-          styles.button,
-          (isUnder18 ||
-            !firstName ||
-            !lastName ||
-            !dateOfBirth ||
-            !gender ||
-            !email ||
-            !password ||
-            !confirmPassword) &&
-            styles.buttonDisabled,
-        ]}
-        onPress={handleSignUp}
-        disabled={
-          isSubmitting ||
-          isUnder18 ||
-          !firstName ||
-          !lastName ||
-          !dateOfBirth ||
-          !gender ||
-          !email ||
-          !password ||
-          !confirmPassword
-        }
-      >
-        {isSubmitting ? (
-          <ActivityIndicator color={colors.text} />
-        ) : (
-          <Text style={styles.buttonText}>Continue</Text>
-        )}
-      </Pressable>
-      <Link href="/(auth)/sign-in" style={styles.link}>
-        Already have an account? Sign in
-      </Link>
+      {step !== "verifyEmail" && infoMessage ? (
+        <Text style={styles.info}>{infoMessage}</Text>
+      ) : null}
+      {step !== "verifyEmail" ? (
+        <Pressable
+          style={[styles.button, isContinueDisabled && styles.buttonDisabled]}
+          onPress={goNext}
+          disabled={isContinueDisabled}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator color={colors.text} />
+          ) : (
+            <Text style={styles.buttonText}>
+              {step === "password" ? "Continue" : "Continue"}
+            </Text>
+          )}
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -304,6 +468,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     justifyContent: "center",
     gap: 16,
+  },
+  backCircleFloating: {
+    position: "absolute",
+    top: 18,
+    left: 16,
+    height: 34,
+    width: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
   },
   title: {
     color: colors.text,
@@ -335,6 +513,24 @@ const styles = StyleSheet.create({
   nameInput: {
     flex: 1,
     minWidth: 0,
+  },
+  stepHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  stepText: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+  },
+  backCircleIcon: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 18,
+    fontWeight: "600",
+    marginTop: -1,
   },
   label: {
     color: colors.text,
@@ -369,28 +565,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: "600",
   },
-  dateRow: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "stretch",
-  },
-  dateInput: {
-    flex: 1,
-    minWidth: 0,
-  },
-  datePickerButton: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 12,
-    minHeight: 56,
-    minWidth: 56,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  datePickerButtonText: {
-    fontSize: 22,
-  },
   input: {
     borderColor: colors.border,
     borderWidth: 1,
@@ -419,16 +593,14 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
   },
-  link: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    textAlign: "center",
-    textDecorationLine: "underline",
-    marginTop: 8,
-    fontSize: 15,
-  },
   error: {
     color: "#FF3B30",
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+    marginTop: -8,
+  },
+  info: {
+    color: colors.mutedText,
     fontFamily: typography.fontFamily,
     fontSize: 14,
     marginTop: -8,
@@ -438,5 +610,45 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily,
     fontSize: 14,
     marginTop: -8,
+  },
+  verifyTitle: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 20,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  verifyBody: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  verifyEmail: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontWeight: "600",
+  },
+  verifySpinnerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 4,
+  },
+  verifyWaitingText: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+  },
+  resendButton: {
+    alignSelf: "flex-start",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  resendButtonText: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+    textDecorationLine: "underline",
   },
 });

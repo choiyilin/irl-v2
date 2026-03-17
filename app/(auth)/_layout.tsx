@@ -1,11 +1,11 @@
-import { Redirect, Stack } from 'expo-router';
+import { Stack } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 
 import { useAuth } from '@/src/providers/AuthProvider';
 import { colors } from '@/src/theme/colors';
 
 export default function AuthLayout() {
-  const { isLoading, session } = useAuth();
+  const { isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -21,10 +21,6 @@ export default function AuthLayout() {
     );
   }
 
-  if (session) {
-    return <Redirect href="/(tabs)/explore" />;
-  }
-
   return (
     <Stack
       screenOptions={{
@@ -33,7 +29,7 @@ export default function AuthLayout() {
         contentStyle: { backgroundColor: colors.background },
       }}>
       <Stack.Screen name="sign-in" options={{ title: 'Sign In' }} />
-      <Stack.Screen name="sign-up" options={{ title: 'Sign Up' }} />
+      <Stack.Screen name="sign-up" options={{ headerShown: false }} />
     </Stack>
   );
 }
