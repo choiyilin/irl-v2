@@ -77,9 +77,6 @@ export default function SignInScreen() {
       <Link href="/(auth)/sign-up" style={styles.link}>
         No account yet? Create one
       </Link>
-      <Link href="/photos?preview=true" style={styles.linkSecondary}>
-        Preview onboarding (photos & preferences)
-      </Link>
     </View>
   );
 }
@@ -144,14 +141,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     textDecorationLine: "underline",
     marginTop: 4,
-  },
-  linkSecondary: {
-    color: colors.mutedText,
-    fontFamily: typography.fontFamily,
-    textAlign: "center",
-    textDecorationLine: "underline",
-    marginTop: 8,
-    fontSize: 14,
   },
   error: {
     color: colors.text,

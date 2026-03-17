@@ -1,4 +1,4 @@
-import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useState } from "react";
 import {
     ActivityIndicator,
@@ -66,15 +66,13 @@ function OptionChips<T extends string>({
 export default function PreferencesScreen() {
   const { session } = useAuth();
   const router = useRouter();
-  const { preview } = useLocalSearchParams<{ preview?: string }>();
-  const isPreview = preview === "true";
   const [pronouns, setPronouns] = useState("");
   const [interestedIn, setInterestedIn] = useState("");
   const [orientation, setOrientation] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  if (!session && !isPreview) {
+  if (!session) {
     return <Redirect href="/(auth)/sign-in" />;
   }
 
@@ -88,9 +86,6 @@ export default function PreferencesScreen() {
     if (!canSubmit) {
       setErrorMessage("Please answer all preferences.");
       return;
-    }
-    if (isPreview && !session) {
-      return; // Preview only – no save
     }
     setIsSubmitting(true);
     try {
@@ -119,7 +114,6 @@ export default function PreferencesScreen() {
       contentContainerStyle={styles.container}
       keyboardShouldPersistTaps="handled"
     >
-      {isPreview ? <Text style={styles.previewBadge}>Preview</Text> : null}
       <Text style={styles.title}>Preferences</Text>
       <Text style={styles.subtitle}>
         A few quick questions so we can personalize your experience.
@@ -167,18 +161,6 @@ const styles = StyleSheet.create({
   scroll: {
     flex: 1,
     backgroundColor: colors.background,
-  },
-  previewBadge: {
-    alignSelf: "flex-start",
-    color: colors.mutedText,
-    fontFamily: typography.fontFamily,
-    fontSize: 13,
-    marginBottom: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   container: {
     paddingHorizontal: 24,

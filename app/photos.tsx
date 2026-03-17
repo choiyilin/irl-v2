@@ -1,5 +1,5 @@
 import * as ImagePicker from "expo-image-picker";
-import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,6 +19,15 @@ import { supabase } from "@/src/lib/supabase";
 const PHOTO_SLOTS = [1, 2, 3, 4, 5, 6];
 const STORAGE_BUCKET = "profile-photos";
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return "Could not save photos step.";
+}
+
 async function uploadPhotoToSupabase(uri: string, userId: string, slotIndex: number) {
   const response = await fetch(uri);
   const blob = await response.blob();
@@ -34,7 +43,7 @@ async function uploadPhotoToSupabase(uri: string, userId: string, slotIndex: num
     });
 
   if (error) {
-    throw error;
+    throw new Error(error.message);
   }
 
   return data.path;
@@ -43,25 +52,20 @@ async function uploadPhotoToSupabase(uri: string, userId: string, slotIndex: num
 export default function PhotosScreen() {
   const { session } = useAuth();
   const router = useRouter();
-  const { preview } = useLocalSearchParams<{ preview?: string }>();
-  const isPreview = preview === "true";
   const [photos, setPhotos] = useState<(string | null)[]>(PHOTO_SLOTS.map(() => null));
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (isPreview) {
-      return;
-    }
     (async () => {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
         setErrorMessage("We need access to your photos to let you add pictures.");
       }
     })();
-  }, [isPreview]);
+  }, []);
 
-  if (!session && !isPreview) {
+  if (!session) {
     return <Redirect href="/(auth)/sign-in" />;
   }
 
@@ -69,7 +73,7 @@ export default function PhotosScreen() {
     setErrorMessage("");
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       allowsMultipleSelection: false,
       quality: 0.9,
     });
@@ -94,10 +98,6 @@ export default function PhotosScreen() {
     setErrorMessage("");
     if (!hasSixPhotos) {
       setErrorMessage("Please add six photos to continue.");
-      return;
-    }
-    if (isPreview && !session) {
-      router.replace("/preferences?preview=true");
       return;
     }
     if (!session) {
@@ -127,7 +127,7 @@ export default function PhotosScreen() {
         .from("profile_photos")
         .insert(records);
       if (insertError) {
-        throw insertError;
+        throw new Error(insertError.message);
       }
 
       const { error: metaError } = await supabase.auth.updateUser({
@@ -135,13 +135,11 @@ export default function PhotosScreen() {
           has_uploaded_photos: true,
         },
       });
-      if (metaError) throw metaError;
+      if (metaError) throw new Error(metaError.message);
 
       router.replace("/preferences");
     } catch (e) {
-      setErrorMessage(
-        e instanceof Error ? e.message : "Could not save photos step.",
-      );
+      setErrorMessage(getErrorMessage(e));
     } finally {
       setIsSubmitting(false);
     }
