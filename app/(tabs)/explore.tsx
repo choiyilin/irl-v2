@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { useAuth } from '@/src/providers/AuthProvider';
 import { supabase } from '@/src/lib/supabase';
@@ -14,10 +22,18 @@ type ExploreProfile = {
   age: number | null;
 };
 
+type ProfilePhotoRow = {
+  slot_index: number;
+  storage_path: string;
+};
+
+const PROFILE_PHOTOS_BUCKET = 'profile-photos';
+
 export default function ExploreScreen() {
   const { user } = useAuth();
   const [profiles, setProfiles] = useState<ExploreProfile[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [activePhotoUrls, setActivePhotoUrls] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -58,6 +74,44 @@ export default function ExploreScreen() {
   useEffect(() => {
     loadExploreFeed();
   }, [loadExploreFeed]);
+
+  useEffect(() => {
+    const loadActiveProfilePhotos = async () => {
+      if (!activeProfile?.id) {
+        setActivePhotoUrls([]);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('profile_photos')
+          .select('slot_index, storage_path')
+          .eq('user_id', activeProfile.id)
+          .order('slot_index', { ascending: true });
+        if (error) throw error;
+
+        const signedUrls = await Promise.all(
+          ((data ?? []) as ProfilePhotoRow[]).map(async (photo) => {
+            const { data: signedData, error: signedError } = await supabase.storage
+              .from(PROFILE_PHOTOS_BUCKET)
+              .createSignedUrl(photo.storage_path, 60 * 60);
+
+            if (signedError || !signedData?.signedUrl) {
+              return null;
+            }
+
+            return signedData.signedUrl;
+          }),
+        );
+
+        setActivePhotoUrls(signedUrls.filter((url): url is string => Boolean(url)));
+      } catch {
+        setActivePhotoUrls([]);
+      }
+    };
+
+    loadActiveProfilePhotos();
+  }, [activeProfile?.id]);
 
   const goNextProfile = () => {
     setMatchMessage('');
@@ -121,27 +175,58 @@ export default function ExploreScreen() {
     );
   }
 
+  const mainPhotoUrl = activePhotoUrls[0] ?? null;
+  const additionalPhotoUrls = activePhotoUrls.slice(1);
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Explore Profiles</Text>
       {matchMessage ? <Text style={styles.matchBanner}>{matchMessage}</Text> : null}
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
       {activeProfile ? (
         <>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>{activeProfile.display_name ?? 'Unnamed profile'}</Text>
-            <Text style={styles.metaText}>
-              {[activeProfile.age ? `${activeProfile.age}` : null, activeProfile.city]
-                .filter(Boolean)
-                .join(' • ') || 'Details coming soon'}
+          <View style={styles.mainPhotoCard}>
+            {mainPhotoUrl ? (
+              <Image source={{ uri: mainPhotoUrl }} style={styles.mainPhoto} />
+            ) : (
+              <View style={[styles.mainPhoto, styles.photoPlaceholder]}>
+                <Text style={styles.photoPlaceholderText}>No profile photo yet</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.infoCard}>
+            <Text style={styles.profileName}>
+              {activeProfile.display_name ?? 'Unnamed profile'}
+              {activeProfile.age ? `, ${activeProfile.age}` : ''}
             </Text>
-            <Text style={styles.cardBody}>{activeProfile.bio ?? 'No bio yet.'}</Text>
+            {activeProfile.city ? <Text style={styles.profileMeta}>Location: {activeProfile.city}</Text> : null}
+            {activeProfile.bio ? <Text style={styles.profileBio}>{activeProfile.bio}</Text> : null}
+          </View>
+
+          <View style={styles.gallerySection}>
+            <Text style={styles.galleryTitle}>More photos</Text>
+            {additionalPhotoUrls.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.galleryRow}>
+                {additionalPhotoUrls.map((photoUrl, index) => (
+                  <Image
+                    key={`${photoUrl}-${index}`}
+                    source={{ uri: photoUrl }}
+                    style={styles.galleryPhoto}
+                  />
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.galleryEmpty}>No additional photos yet.</Text>
+            )}
           </View>
 
           <View style={styles.actionRow}>
-            <Pressable style={[styles.actionButton, styles.passButton]} onPress={handlePass}>
-              <Text style={styles.actionText}>Pass</Text>
+            <Pressable style={[styles.actionButton, styles.passButton]} onPress={handlePass} disabled={isSubmitting}>
+              <Text style={styles.actionText}>Skip</Text>
             </Pressable>
             <Pressable
               style={[styles.actionButton, styles.likeButton, isSubmitting && styles.disabled]}
@@ -152,9 +237,9 @@ export default function ExploreScreen() {
           </View>
         </>
       ) : (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>No more profiles right now</Text>
-          <Text style={styles.cardBody}>
+        <View style={styles.infoCard}>
+          <Text style={styles.profileName}>No more profiles right now</Text>
+          <Text style={styles.profileBio}>
             You have reached the end of your current feed. Check back later for new profiles.
           </Text>
           <Pressable style={[styles.actionButton, styles.likeButton]} onPress={loadExploreFeed}>
@@ -177,33 +262,72 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
+  mainPhotoCard: {
+    borderRadius: 18,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 14,
-    gap: 6,
+    backgroundColor: '#F6F6F6',
   },
-  metaText: {
+  mainPhoto: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+  },
+  photoPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoPlaceholderText: {
     color: colors.mutedText,
     fontFamily: typography.fontFamily,
     fontSize: 14,
   },
-  cardTitle: {
+  infoCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 8,
+  },
+  profileName: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 32,
+    fontWeight: '700',
+  },
+  profileMeta: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 18,
+  },
+  profileBio: {
     color: colors.text,
     fontFamily: typography.fontFamily,
     fontSize: 16,
-    fontWeight: '600',
+    lineHeight: 22,
   },
-  cardBody: {
+  gallerySection: {
+    gap: 8,
+  },
+  galleryTitle: {
     color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  galleryRow: {
+    gap: 10,
+  },
+  galleryPhoto: {
+    width: 110,
+    height: 150,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  galleryEmpty: {
+    color: colors.mutedText,
     fontFamily: typography.fontFamily,
     fontSize: 14,
   },
@@ -214,23 +338,23 @@ const styles = StyleSheet.create({
   actionButton: {
     flex: 1,
     borderRadius: 12,
-    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.border,
+    minHeight: 52,
   },
   passButton: {
-    backgroundColor: colors.background,
+    backgroundColor: '#FFFFFF',
   },
   likeButton: {
-    backgroundColor: colors.surface,
+    backgroundColor: '#F4D3E0',
   },
   actionText: {
     color: colors.text,
     fontFamily: typography.fontFamily,
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
   },
   matchBanner: {
     color: colors.text,

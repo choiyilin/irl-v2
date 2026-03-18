@@ -170,6 +170,13 @@ export default function DiscoveryScreen(): React.JSX.Element {
     () => promotions.find((promotion) => promotion.id === selectedPromotionId) ?? null,
     [promotions, selectedPromotionId],
   );
+  const listPromotions = useMemo(() => {
+    if (!selectedPromotionId) {
+      return filteredVisiblePromotions;
+    }
+
+    return filteredVisiblePromotions.filter((promotion) => promotion.id !== selectedPromotionId);
+  }, [filteredVisiblePromotions, selectedPromotionId]);
 
   const handleRegionChangeComplete = (nextRegion: Region) => {
     setRegion(nextRegion);
@@ -291,7 +298,7 @@ export default function DiscoveryScreen(): React.JSX.Element {
             ) : null}
 
             <FlatList
-              data={filteredVisiblePromotions}
+              data={listPromotions}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
@@ -319,10 +326,12 @@ export default function DiscoveryScreen(): React.JSX.Element {
                 );
               }}
               ListEmptyComponent={
-                <View style={styles.emptyCard}>
-                  <Text style={styles.cardTitle}>No promotions in this map area</Text>
-                  <Text style={styles.cardBody}>Move the map or clear filters to discover more venues.</Text>
-                </View>
+                filteredVisiblePromotions.length === 0 ? (
+                  <View style={styles.emptyCard}>
+                    <Text style={styles.cardTitle}>No promotions in this map area</Text>
+                    <Text style={styles.cardBody}>Move the map or clear filters to discover more venues.</Text>
+                  </View>
+                ) : null
               }
             />
           </Animated.View>
