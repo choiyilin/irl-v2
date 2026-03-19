@@ -5,6 +5,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
+  Modal,
   PanResponder,
   Pressable,
   ScrollView,
@@ -52,6 +53,16 @@ export default function DiscoveryScreen(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isDealModalVisible, setIsDealModalVisible] = useState(false);
+  const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
+  const [isClaimingDeal, setIsClaimingDeal] = useState(false);
+  const [dealNotice, setDealNotice] = useState('');
+  const [availability, setAvailability] = useState<{
+    max_claims: number;
+    claimed_count: number;
+    remaining_count: number;
+    already_claimed: boolean;
+  } | null>(null);
   const sheetTranslateY = useRef(new Animated.Value(SHEET_COLLAPSED_OFFSET)).current;
   const sheetOffset = useRef(SHEET_COLLAPSED_OFFSET);
 
@@ -75,7 +86,7 @@ export default function DiscoveryScreen(): React.JSX.Element {
 
     const { data, error } = await supabase
       .from('business_promotions')
-      .select('id, business_name, category, description, address, latitude, longitude')
+      .select('id, business_name, category, description, address, latitude, longitude, max_claims')
       .eq('is_active', true)
       .not('latitude', 'is', null)
       .not('longitude', 'is', null);
@@ -182,10 +193,78 @@ export default function DiscoveryScreen(): React.JSX.Element {
     setRegion(nextRegion);
   };
 
+  const loadAvailability = useCallback(async (promotionId: string) => {
+    setIsAvailabilityLoading(true);
+    setDealNotice('');
+    try {
+      const { data, error } = await supabase.rpc('get_promotion_availability', {
+        p_promotion_id: promotionId,
+      });
+      if (error) throw error;
+
+      const row = (Array.isArray(data) ? data[0] : data) as
+        | {
+            max_claims: number;
+            claimed_count: number;
+            remaining_count: number;
+            already_claimed: boolean;
+          }
+        | undefined;
+
+      if (!row) {
+        throw new Error('Unable to load deal availability.');
+      }
+
+      setAvailability(row);
+    } catch (error) {
+      setAvailability(null);
+      setDealNotice(error instanceof Error ? error.message : 'Unable to load deal details.');
+    } finally {
+      setIsAvailabilityLoading(false);
+    }
+  }, []);
+
+  const openDealModal = (promotionId: string) => {
+    setIsDealModalVisible(true);
+    loadAvailability(promotionId);
+  };
+
   const handleSelectPromotion = (promotionId: string) => {
     setSelectedPromotionId(promotionId);
     snapSheet(0);
+    openDealModal(promotionId);
   };
+
+  const handleClaimDeal = async () => {
+    if (!selectedPromotionId) return;
+    setIsClaimingDeal(true);
+    setDealNotice('');
+    try {
+      const { error } = await supabase.rpc('claim_promotion_ticket', {
+        p_promotion_id: selectedPromotionId,
+      });
+      if (error) throw error;
+
+      setDealNotice('Deal claimed. Your ticket is now in Profile > Tickets.');
+      await loadAvailability(selectedPromotionId);
+    } catch (error) {
+      setDealNotice(error instanceof Error ? error.message : 'Unable to claim deal.');
+    } finally {
+      setIsClaimingDeal(false);
+    }
+  };
+
+  const remainingDealLabel = useMemo(() => {
+    if (!availability) {
+      return '';
+    }
+
+    if (availability.max_claims === 1) {
+      return `${availability.remaining_count} reservation remaining`;
+    }
+
+    return `${availability.remaining_count} tickets remaining`;
+  }, [availability]);
 
   const panResponder = useMemo(
     () =>
@@ -283,7 +362,9 @@ export default function DiscoveryScreen(): React.JSX.Element {
             </View>
 
             {selectedPromotion ? (
-              <View style={styles.selectedCard}>
+              <Pressable
+                style={styles.selectedCard}
+                onPress={() => handleSelectPromotion(selectedPromotion.id)}>
                 <View style={styles.selectedTopRow}>
                   <Text style={styles.selectedName}>{selectedPromotion.business_name}</Text>
                   <View style={styles.badge}>
@@ -294,7 +375,7 @@ export default function DiscoveryScreen(): React.JSX.Element {
                   {[selectedPromotion.category, selectedPromotion.address].filter(Boolean).join(' • ')}
                 </Text>
                 <Text style={styles.selectedDescription}>{selectedPromotion.description}</Text>
-              </View>
+              </Pressable>
             ) : null}
 
             <FlatList
@@ -337,6 +418,69 @@ export default function DiscoveryScreen(): React.JSX.Element {
           </Animated.View>
         </>
       ) : null}
+
+      <Modal
+        visible={isDealModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsDealModalVisible(false)}>
+        <View style={styles.modalBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsDealModalVisible(false)} />
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {selectedPromotion?.business_name ?? 'Deal details'}
+              </Text>
+              <Pressable onPress={() => setIsDealModalVisible(false)}>
+                <Ionicons name="close" size={20} color={colors.text} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalDescription}>
+              {selectedPromotion?.description ?? 'Promotion details'}
+            </Text>
+
+            {isAvailabilityLoading ? (
+              <View style={styles.modalCenter}>
+                <ActivityIndicator color={colors.text} />
+              </View>
+            ) : (
+              <>
+                {availability ? (
+                  <Text style={styles.availabilityText}>{remainingDealLabel}</Text>
+                ) : null}
+                {dealNotice ? <Text style={styles.modalNotice}>{dealNotice}</Text> : null}
+                <Pressable
+                  style={[
+                    styles.claimButton,
+                    (isClaimingDeal ||
+                      !availability ||
+                      availability.already_claimed ||
+                      availability.remaining_count <= 0) &&
+                      styles.claimButtonDisabled,
+                  ]}
+                  disabled={
+                    isClaimingDeal ||
+                    !availability ||
+                    availability.already_claimed ||
+                    availability.remaining_count <= 0
+                  }
+                  onPress={handleClaimDeal}>
+                  <Text style={styles.claimButtonText}>
+                    {isClaimingDeal
+                      ? 'Claiming...'
+                      : availability?.already_claimed
+                        ? 'Already claimed'
+                        : availability && availability.remaining_count <= 0
+                          ? 'Sold out'
+                          : 'Claim deal'}
+                  </Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -595,6 +739,73 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily,
     fontSize: 14,
     textAlign: 'center',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.32)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  modalTitle: {
+    flex: 1,
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  modalDescription: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+  },
+  modalCenter: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  availabilityText: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  modalNotice: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 13,
+  },
+  claimButton: {
+    backgroundColor: '#F3C712',
+    borderColor: '#D5A500',
+    borderWidth: 1,
+    borderRadius: 12,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  claimButtonDisabled: {
+    opacity: 0.55,
+  },
+  claimButtonText: {
+    color: '#1F1F1F',
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 

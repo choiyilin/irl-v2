@@ -1,5 +1,5 @@
 import * as ImagePicker from "expo-image-picker";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -25,6 +25,25 @@ type ProfilePhoto = {
   publicUrl: string;
 };
 
+type PromotionTicket = {
+  id: string;
+  claimed_at: string;
+  promotion: {
+    id: string;
+    business_name: string;
+    category: string;
+    description: string;
+    ends_at: string | null;
+    is_active: boolean;
+  };
+};
+
+function formatClaimedDate(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Claimed recently";
+  return `Claimed ${date.toLocaleDateString()}`;
+}
+
 export default function ProfileScreen() {
   const { signOut, user } = useAuth();
   const [firstName, setFirstName] = useState("");
@@ -35,6 +54,8 @@ export default function ProfileScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
+  const [tickets, setTickets] = useState<PromotionTicket[]>([]);
+  const [isLoadingTickets, setIsLoadingTickets] = useState(false);
 
   const email = user?.email ?? "";
   const metadata = user?.user_metadata ?? {};
@@ -81,6 +102,84 @@ export default function ProfileScreen() {
       isCancelled = true;
     };
   }, [user]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadTickets = async () => {
+      if (!user) {
+        if (!isCancelled) setTickets([]);
+        return;
+      }
+
+      setIsLoadingTickets(true);
+      const { data, error } = await supabase
+        .from("promotion_tickets")
+        .select(
+          "id, claimed_at, business_promotions(id, business_name, category, description, ends_at, is_active)",
+        )
+        .eq("user_id", user.id)
+        .order("claimed_at", { ascending: false });
+
+      if (error || !data) {
+        if (!isCancelled) setTickets([]);
+        setIsLoadingTickets(false);
+        return;
+      }
+
+      const normalized = data
+        .map((row) => {
+          const promotionRow = Array.isArray(row.business_promotions)
+            ? row.business_promotions[0]
+            : row.business_promotions;
+
+          if (!promotionRow) return null;
+
+          return {
+            id: row.id as string,
+            claimed_at: row.claimed_at as string,
+            promotion: {
+              id: promotionRow.id as string,
+              business_name: promotionRow.business_name as string,
+              category: promotionRow.category as string,
+              description: promotionRow.description as string,
+              ends_at: (promotionRow.ends_at as string | null) ?? null,
+              is_active: Boolean(promotionRow.is_active),
+            },
+          } satisfies PromotionTicket;
+        })
+        .filter((ticket): ticket is PromotionTicket => Boolean(ticket));
+
+      if (!isCancelled) {
+        setTickets(normalized);
+      }
+      setIsLoadingTickets(false);
+    };
+
+    loadTickets();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user]);
+
+  const activeTickets = useMemo(() => {
+    const now = Date.now();
+    return tickets.filter((ticket) => {
+      const endsAt = ticket.promotion.ends_at ? new Date(ticket.promotion.ends_at).getTime() : null;
+      const notExpired = endsAt === null || endsAt > now;
+      return ticket.promotion.is_active && notExpired;
+    });
+  }, [tickets]);
+
+  const pastTickets = useMemo(() => {
+    const now = Date.now();
+    return tickets.filter((ticket) => {
+      const endsAt = ticket.promotion.ends_at ? new Date(ticket.promotion.ends_at).getTime() : null;
+      const expired = endsAt !== null && endsAt <= now;
+      return !ticket.promotion.is_active || expired;
+    });
+  }, [tickets]);
 
   const openPickerForSlot = async (index: number) => {
     setErrorMessage("");
@@ -263,6 +362,45 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Tickets</Text>
+        {isLoadingTickets ? (
+          <ActivityIndicator color={colors.text} />
+        ) : (
+          <>
+            <Text style={styles.ticketSectionTitle}>Current tickets</Text>
+            {activeTickets.length > 0 ? (
+              activeTickets.map((ticket) => (
+                <View key={ticket.id} style={styles.ticketCard}>
+                  <Text style={styles.ticketVenue}>{ticket.promotion.business_name}</Text>
+                  <Text style={styles.ticketMeta}>
+                    {ticket.promotion.category} • {formatClaimedDate(ticket.claimed_at)}
+                  </Text>
+                  <Text style={styles.ticketDescription}>{ticket.promotion.description}</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.ticketEmpty}>No active tickets.</Text>
+            )}
+
+            <Text style={styles.ticketSectionTitle}>Past tickets</Text>
+            {pastTickets.length > 0 ? (
+              pastTickets.map((ticket) => (
+                <View key={ticket.id} style={styles.ticketCard}>
+                  <Text style={styles.ticketVenue}>{ticket.promotion.business_name}</Text>
+                  <Text style={styles.ticketMeta}>
+                    {ticket.promotion.category} • {formatClaimedDate(ticket.claimed_at)}
+                  </Text>
+                  <Text style={styles.ticketDescription}>{ticket.promotion.description}</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.ticketEmpty}>No past tickets yet.</Text>
+            )}
+          </>
+        )}
+      </View>
+
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
 
@@ -440,6 +578,43 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily,
     fontSize: 12,
     marginTop: 4,
+  },
+  ticketSectionTitle: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  ticketCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    padding: 10,
+    gap: 3,
+  },
+  ticketVenue: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  ticketMeta: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 12,
+  },
+  ticketDescription: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+  },
+  ticketEmpty: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 13,
+    marginBottom: 4,
   },
   saveButton: {
     alignItems: "center",
