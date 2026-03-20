@@ -446,16 +446,17 @@ export default function ProfileScreen() {
                   </View>
                 )}
               </Pressable>
-              <Pressable
-                style={styles.avatarEditIconButton}
-                onPress={() => openPickerForSlot(0, { persistAfter: true })}
-                disabled={isSettingsOpen}
-                hitSlop={12}
-                accessibilityRole="button"
-                accessibilityLabel="Change profile picture"
-              >
-                <Ionicons name="camera-outline" size={16} color={colors.text} />
-              </Pressable>
+              {!isSettingsOpen ? (
+                <Pressable
+                  style={styles.avatarEditIconButton}
+                  onPress={() => openPickerForSlot(0, { persistAfter: true })}
+                  hitSlop={12}
+                  accessibilityRole="button"
+                  accessibilityLabel="Change profile picture"
+                >
+                  <Ionicons name="camera-outline" size={16} color={colors.text} />
+                </Pressable>
+              ) : null}
             </View>
           </View>
           <Text style={styles.title}>
