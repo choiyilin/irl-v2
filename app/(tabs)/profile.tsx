@@ -60,6 +60,24 @@ function formatClaimedDate(iso: string) {
   return `Claimed ${date.toLocaleDateString()}`;
 }
 
+async function syncProfilePhotosTable(userId: string, slotPhotos: (ProfilePhoto | null)[]) {
+  const existing = slotPhotos.filter((p): p is ProfilePhoto => !!p);
+  const { error: deleteError } = await supabase
+    .from("profile_photos")
+    .delete()
+    .eq("user_id", userId);
+  if (deleteError) throw new Error(deleteError.message);
+  if (existing.length > 0) {
+    const records = existing.map((p) => ({
+      user_id: userId,
+      slot_index: p.slot_index,
+      storage_path: p.storage_path,
+    }));
+    const { error: insertError } = await supabase.from("profile_photos").insert(records);
+    if (insertError) throw new Error(insertError.message);
+  }
+}
+
 export default function ProfileScreen() {
   const { signOut, user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -274,7 +292,10 @@ export default function ProfileScreen() {
     });
   }, [tickets]);
 
-  const openPickerForSlot = async (index: number) => {
+  const openPickerForSlot = async (
+    index: number,
+    options?: { persistAfter?: boolean },
+  ) => {
     setErrorMessage("");
     setInfoMessage("");
 
@@ -312,54 +333,38 @@ export default function ProfileScreen() {
         throw new Error(signedError?.message ?? "Unable to load image preview.");
       }
 
+      let nextSnapshot: (ProfilePhoto | null)[] = [];
       setPhotos((prev) => {
-        const next = [...prev];
-        next[index] = {
+        nextSnapshot = [...prev];
+        nextSnapshot[index] = {
           id: prev[index]?.id ?? "",
           slot_index: index + 1,
           storage_path: data.path,
           displayUrl: signed.signedUrl,
         };
-        return next;
+        return nextSnapshot;
       });
+
+      if (options?.persistAfter && user) {
+        try {
+          await syncProfilePhotosTable(user.id, nextSnapshot);
+          const { error: metaError } = await supabase.auth.updateUser({
+            data: {
+              has_uploaded_photos: nextSnapshot.some((p) => p !== null),
+            },
+          });
+          if (metaError) throw new Error(metaError.message);
+          setInfoMessage("Profile picture updated.");
+        } catch (e) {
+          setErrorMessage(
+            e instanceof Error ? e.message : "Could not save profile picture.",
+          );
+        }
+      }
     } catch (e) {
       setErrorMessage(
         e instanceof Error ? e.message : "Could not update photo.",
       );
-    }
-  };
-
-  const handleSave = async () => {
-    if (!user) return;
-    setErrorMessage("");
-    setInfoMessage("");
-    setIsSaving(true);
-    try {
-      await supabase.auth.updateUser({
-        data: {
-          first_name: firstName.trim() || null,
-          last_name: lastName.trim() || null,
-        },
-      });
-
-      const existing = photos.filter((p): p is ProfilePhoto => !!p);
-      if (existing.length > 0) {
-        await supabase.from("profile_photos").delete().eq("user_id", user.id);
-        const records = existing.map((p) => ({
-          user_id: user.id,
-          slot_index: p.slot_index,
-          storage_path: p.storage_path,
-        }));
-        await supabase.from("profile_photos").insert(records);
-      }
-
-      setInfoMessage("Profile updated.");
-    } catch (e) {
-      setErrorMessage(
-        e instanceof Error ? e.message : "Could not save profile.",
-      );
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -382,6 +387,8 @@ export default function ProfileScreen() {
 
     setIsSaving(true);
     try {
+      const existing = photos.filter((p): p is ProfilePhoto => !!p);
+
       const { error } = await supabase.auth.updateUser({
         data: {
           first_name: settingsFirstName.trim() || null,
@@ -389,15 +396,18 @@ export default function ProfileScreen() {
           gender: settingsGender.trim(),
           sexual_orientation: settingsSexualOrientation.trim(),
           interested_in_seeing: settingsInterestedIn.join(", "),
+          has_uploaded_photos: existing.length > 0,
         },
       });
       if (error) throw new Error(error.message);
+
+      await syncProfilePhotosTable(user.id, photos);
 
       // Update local title immediately; also keeps state consistent when we exit settings.
       setFirstName(settingsFirstName.trim());
       setLastName(settingsLastName.trim());
       setIsSettingsOpen(false);
-      setInfoMessage("Settings saved.");
+      setInfoMessage("Profile updated.");
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : "Could not save settings.");
     } finally {
@@ -408,14 +418,23 @@ export default function ProfileScreen() {
   return (
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={styles.container}
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: Math.max(insets.bottom, 20) + 56 },
+      ]}
       keyboardShouldPersistTaps="handled"
     >
       <View style={[styles.headerRow, { paddingTop: insets.top ? insets.top : 0 }]}>
         <View style={styles.headerLeft}>
           <View style={styles.avatarContainer}>
             <View style={styles.avatarWrap}>
-              <Pressable style={styles.avatar} onPress={() => openPickerForSlot(0)}>
+              <Pressable
+                style={styles.avatar}
+                onPress={() => openPickerForSlot(0, { persistAfter: true })}
+                disabled={isSettingsOpen}
+                accessibilityRole="button"
+                accessibilityLabel="Change profile picture"
+              >
                 {primaryPhoto ? (
                   <Image source={{ uri: primaryPhoto.displayUrl }} style={styles.avatarImage} />
                 ) : (
@@ -427,9 +446,16 @@ export default function ProfileScreen() {
                   </View>
                 )}
               </Pressable>
-              <View style={styles.avatarEditBadge}>
-                <Text style={styles.avatarEditBadgeText}>✎</Text>
-              </View>
+              <Pressable
+                style={styles.avatarEditIconButton}
+                onPress={() => openPickerForSlot(0, { persistAfter: true })}
+                disabled={isSettingsOpen}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="Change profile picture"
+              >
+                <Ionicons name="camera-outline" size={16} color={colors.text} />
+              </Pressable>
             </View>
           </View>
           <Text style={styles.title}>
@@ -485,6 +511,38 @@ export default function ProfileScreen() {
                 value={settingsLastName}
                 onChangeText={setSettingsLastName}
               />
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Photos</Text>
+            <View style={styles.grid}>
+              {isLoadingPhotos ? (
+                <View style={styles.photosLoadingOverlay}>
+                  <ActivityIndicator color={colors.text} />
+                </View>
+              ) : null}
+              {PHOTO_SLOTS.map((slot, index) => {
+                const photo = photos[index];
+                return (
+                  <Pressable
+                    key={slot}
+                    style={styles.photoSlot}
+                    onPress={() => openPickerForSlot(index)}
+                  >
+                    {photo ? (
+                      <Image source={{ uri: photo.displayUrl }} style={styles.photoImage} />
+                    ) : (
+                      <View style={styles.photoPlaceholder}>
+                        <Text style={styles.photoPlaceholderIcon}>＋</Text>
+                      </View>
+                    )}
+                    <View style={styles.photoAddBadge}>
+                      <Text style={styles.photoAddBadgeText}>+</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
 
@@ -581,44 +639,12 @@ export default function ProfileScreen() {
             )}
           </Pressable>
 
-          <Text style={styles.logout} onPress={() => signOut()}>
+          <Text style={[styles.logout, styles.logoutInSettings]} onPress={() => signOut()}>
             Sign out
           </Text>
         </>
       ) : (
         <>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Photos</Text>
-            <View style={styles.grid}>
-              {isLoadingPhotos ? (
-                <View style={styles.photosLoadingOverlay}>
-                  <ActivityIndicator color={colors.text} />
-                </View>
-              ) : null}
-              {PHOTO_SLOTS.map((slot, index) => {
-                const photo = photos[index];
-                return (
-                  <Pressable
-                    key={slot}
-                    style={styles.photoSlot}
-                    onPress={() => openPickerForSlot(index)}
-                  >
-                    {photo ? (
-                      <Image source={{ uri: photo.displayUrl }} style={styles.photoImage} />
-                    ) : (
-                      <View style={styles.photoPlaceholder}>
-                        <Text style={styles.photoPlaceholderIcon}>＋</Text>
-                      </View>
-                    )}
-                    <View style={styles.photoAddBadge}>
-                      <Text style={styles.photoAddBadgeText}>+</Text>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Tickets</Text>
             {isLoadingTickets ? (
@@ -665,19 +691,7 @@ export default function ProfileScreen() {
           {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
           {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
 
-          <Pressable
-            style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
-            onPress={handleSave}
-            disabled={isSaving}
-          >
-            {isSaving ? (
-              <ActivityIndicator color={colors.text} />
-            ) : (
-              <Text style={styles.saveButtonText}>Save changes</Text>
-            )}
-          </Pressable>
-
-          <Text style={styles.logout} onPress={() => signOut()}>
+          <Text style={[styles.logout, styles.logoutMain]} onPress={() => signOut()}>
             Sign out
           </Text>
         </>
@@ -760,6 +774,27 @@ const styles = StyleSheet.create({
   },
   avatarWrap: {
     position: "relative",
+    width: 120,
+    height: 120,
+  },
+  avatarEditIconButton: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    height: 30,
+    width: 30,
+    borderRadius: 15,
+    backgroundColor: colors.background,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 2,
+    elevation: 2,
   },
   avatar: {
     height: 120,
@@ -787,24 +822,6 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily,
     fontSize: 36,
     fontWeight: "700",
-  },
-  avatarEditBadge: {
-    position: "absolute",
-    bottom: -2,
-    right: -2,
-    height: 28,
-    width: 28,
-    borderRadius: 14,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarEditBadgeText: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 14,
   },
   card: {
     backgroundColor: colors.background,
@@ -1016,8 +1033,15 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily,
     fontSize: 14,
     textDecorationLine: "underline",
-    marginTop: 12,
     textAlign: "center",
+  },
+  logoutMain: {
+    marginTop: 56,
+    paddingVertical: 16,
+  },
+  logoutInSettings: {
+    marginTop: 28,
+    paddingVertical: 12,
   },
   error: {
     color: "#FF3B30",
