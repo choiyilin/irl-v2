@@ -463,34 +463,41 @@ export default function ProfileScreen() {
           </Text>
         </View>
 
-        <Pressable
-          style={styles.menuButton}
-          onPress={() => {
-            setErrorMessage("");
-            setInfoMessage("");
-            setIsSettingsOpen(true);
-          }}
-          hitSlop={12}
-          accessibilityRole="button"
-        >
-          <Text style={styles.menuButtonText}>≡</Text>
-        </Pressable>
+        {!isSettingsOpen ? (
+          <Pressable
+            style={styles.menuButton}
+            onPress={() => {
+              setErrorMessage("");
+              setInfoMessage("");
+              setIsSettingsOpen(true);
+            }}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Open settings"
+          >
+            <Text style={styles.menuButtonText}>≡</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {isSettingsOpen ? (
         <>
           <View style={styles.settingsTopBar}>
             <Pressable
-              style={styles.previousButton}
+              style={({ pressed }) => [
+                styles.previousButton,
+                pressed && styles.previousButtonPressed,
+              ]}
               onPress={() => {
                 setIsSettingsOpen(false);
                 setErrorMessage("");
                 setInfoMessage("");
               }}
-              hitSlop={10}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Back to profile"
             >
-              <Ionicons name="chevron-back" size={18} color={colors.text} />
-              <Text style={styles.previousButtonText}>Previous</Text>
+              <Ionicons name="chevron-back" size={24} color={colors.text} />
             </Pressable>
           </View>
 
@@ -548,79 +555,99 @@ export default function ProfileScreen() {
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Account</Text>
-            <Text style={styles.label}>Email</Text>
-            <Text style={styles.readonly}>{email}</Text>
-            <Text style={styles.label}>Date of birth</Text>
-            <Text style={styles.readonly}>
-              {(metadata.date_of_birth as string) ?? "Not set"}
-            </Text>
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Email</Text>
+              <Text style={styles.accountReadonlyValue}>{email}</Text>
+            </View>
+
+            <View style={styles.preferenceDivider} />
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Date of birth</Text>
+              <Text style={styles.accountReadonlyValue}>
+                {(metadata.date_of_birth as string) ?? "Not set"}
+              </Text>
+            </View>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Preferences</Text>
 
-            <Text style={styles.label}>Gender</Text>
-            <View style={styles.chipRow}>
-              {GENDER_OPTIONS.map((option) => (
-                <Pressable
-                  key={option}
-                  style={[styles.chip, settingsGender === option && styles.chipSelected]}
-                  onPress={() => setSettingsGender(option)}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      settingsGender === option && styles.chipTextSelected,
-                    ]}
-                  >
-                    {option}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Sexual orientation</Text>
-            <View style={styles.chipRow}>
-              {ORIENTATION_OPTIONS.map((option) => (
-                <Pressable
-                  key={option}
-                  style={[
-                    styles.chip,
-                    settingsSexualOrientation === option && styles.chipSelected,
-                  ]}
-                  onPress={() => setSettingsSexualOrientation(option)}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      settingsSexualOrientation === option && styles.chipTextSelected,
-                    ]}
-                  >
-                    {option}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Who you’re interested in seeing</Text>
-            <View style={styles.hintRow}>
-              <Text style={styles.hintText}>Select one or more. “Everyone” clears other choices.</Text>
-            </View>
-            <View style={styles.chipRow}>
-              {INTERESTED_IN_OPTIONS.map((option) => {
-                const selected = settingsInterestedIn.includes(option);
-                return (
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Gender</Text>
+              <View style={styles.chipRow}>
+                {GENDER_OPTIONS.map((option) => (
                   <Pressable
                     key={option}
-                    style={[styles.chip, selected && styles.chipSelected]}
-                    onPress={() => toggleInterestedIn(option)}
+                    style={[styles.chip, settingsGender === option && styles.chipSelected]}
+                    onPress={() => setSettingsGender(option)}
                   >
-                    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                    <Text
+                      style={[
+                        styles.chipText,
+                        settingsGender === option && styles.chipTextSelected,
+                      ]}
+                    >
                       {option}
                     </Text>
                   </Pressable>
-                );
-              })}
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.preferenceDivider} />
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Sexual orientation</Text>
+              <View style={styles.chipRow}>
+                {ORIENTATION_OPTIONS.map((option) => (
+                  <Pressable
+                    key={option}
+                    style={[
+                      styles.chip,
+                      settingsSexualOrientation === option && styles.chipSelected,
+                    ]}
+                    onPress={() => setSettingsSexualOrientation(option)}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        settingsSexualOrientation === option && styles.chipTextSelected,
+                      ]}
+                    >
+                      {option}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.preferenceDivider} />
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Who you’re interested in seeing</Text>
+              <View style={styles.hintRow}>
+                <Text style={styles.hintText}>
+                  Select one or more. “Everyone” clears other choices.
+                </Text>
+              </View>
+              <View style={styles.chipRow}>
+                {INTERESTED_IN_OPTIONS.map((option) => {
+                  const selected = settingsInterestedIn.includes(option);
+                  return (
+                    <Pressable
+                      key={option}
+                      style={[styles.chip, selected && styles.chipSelected]}
+                      onPress={() => toggleInterestedIn(option)}
+                    >
+                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                        {option}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
           </View>
 
@@ -741,26 +768,23 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
   settingsTopBar: {
-    marginTop: 2,
-    marginBottom: 2,
+    marginTop: 4,
+    marginBottom: 14,
   },
   previousButton: {
-    flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    justifyContent: "center",
     alignSelf: "flex-start",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(0, 0, 0, 0.05)",
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
-  previousButtonText: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 14,
-    fontWeight: "700",
+  previousButtonPressed: {
+    opacity: 0.72,
+    backgroundColor: "rgba(0, 0, 0, 0.09)",
   },
   title: {
     color: colors.text,
@@ -975,15 +999,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 4,
   },
+  preferenceSection: {
+    paddingVertical: 14,
+    gap: 10,
+  },
+  preferenceSectionLabel: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  accountReadonlyValue: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  preferenceDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginVertical: 4,
+  },
   chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginTop: 6,
+    marginTop: 0,
   },
   hintRow: {
-    marginTop: 2,
-    marginBottom: 4,
+    marginTop: 0,
+    marginBottom: 0,
   },
   hintText: {
     color: colors.mutedText,
