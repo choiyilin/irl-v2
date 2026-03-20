@@ -1,3 +1,4 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -10,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { supabase } from "@/src/lib/supabase";
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -17,6 +19,20 @@ import { colors } from "@/src/theme/colors";
 import { typography } from "@/src/theme/typography";
 
 const PHOTO_SLOTS = [1, 2, 3, 4, 5, 6];
+
+const GENDER_OPTIONS = ["Man", "Woman", "Non-binary", "Prefer to self-describe"] as const;
+const ORIENTATION_OPTIONS = [
+  "Straight",
+  "Gay",
+  "Lesbian",
+  "Bisexual",
+  "Pansexual",
+  "Asexual",
+  "Queer",
+  "Questioning",
+  "Prefer not to say",
+] as const;
+const INTERESTED_IN_OPTIONS = ["Women", "Men", "Non-binary people", "Everyone"] as const;
 
 type ProfilePhoto = {
   id: string;
@@ -46,6 +62,7 @@ function formatClaimedDate(iso: string) {
 
 export default function ProfileScreen() {
   const { signOut, user } = useAuth();
+  const insets = useSafeAreaInsets();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [photos, setPhotos] = useState<(ProfilePhoto | null)[]>(
@@ -57,6 +74,13 @@ export default function ProfileScreen() {
   const [infoMessage, setInfoMessage] = useState("");
   const [tickets, setTickets] = useState<PromotionTicket[]>([]);
   const [isLoadingTickets, setIsLoadingTickets] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  const [settingsFirstName, setSettingsFirstName] = useState("");
+  const [settingsLastName, setSettingsLastName] = useState("");
+  const [settingsGender, setSettingsGender] = useState<string>("");
+  const [settingsSexualOrientation, setSettingsSexualOrientation] = useState<string>("");
+  const [settingsInterestedIn, setSettingsInterestedIn] = useState<string[]>([]);
 
   const email = user?.email ?? "";
   const metadata = user?.user_metadata ?? {};
@@ -65,6 +89,47 @@ export default function ProfileScreen() {
     setFirstName((metadata.first_name as string) ?? "");
     setLastName((metadata.last_name as string) ?? "");
   }, [metadata.first_name, metadata.last_name]);
+
+  useEffect(() => {
+    if (!isSettingsOpen) return;
+    setSettingsFirstName((metadata.first_name as string) ?? "");
+    setSettingsLastName((metadata.last_name as string) ?? "");
+    setSettingsGender((metadata.gender as string) ?? "");
+    setSettingsSexualOrientation((metadata.sexual_orientation as string) ?? "");
+
+    const raw = (metadata.interested_in_seeing as string) ?? "";
+    const parsed = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    // Keep the stored "Everyone" behavior consistent with the signup UI.
+    if (parsed.includes("Everyone")) {
+      setSettingsInterestedIn(["Everyone"]);
+    } else {
+      setSettingsInterestedIn(parsed);
+    }
+  }, [
+    isSettingsOpen,
+    metadata.first_name,
+    metadata.last_name,
+    metadata.gender,
+    metadata.sexual_orientation,
+    metadata.interested_in_seeing,
+  ]);
+
+  const toggleInterestedIn = (option: string) => {
+    setSettingsInterestedIn((prev) => {
+      if (option === "Everyone") {
+        return prev.includes("Everyone") ? [] : ["Everyone"];
+      }
+      const withoutEveryone = prev.filter((o) => o !== "Everyone");
+      if (withoutEveryone.includes(option)) {
+        return withoutEveryone.filter((o) => o !== option);
+      }
+      return [...withoutEveryone, option];
+    });
+  };
 
   const primaryPhoto = photos[0];
 
@@ -298,167 +363,325 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleSaveSettings = async () => {
+    if (!user) return;
+    setErrorMessage("");
+    setInfoMessage("");
+    if (!settingsGender.trim()) {
+      setErrorMessage("Please select your gender.");
+      return;
+    }
+    if (!settingsSexualOrientation.trim()) {
+      setErrorMessage("Please select your sexual orientation.");
+      return;
+    }
+    if (settingsInterestedIn.length === 0) {
+      setErrorMessage("Please select who you’re interested in seeing.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          first_name: settingsFirstName.trim() || null,
+          last_name: settingsLastName.trim() || null,
+          gender: settingsGender.trim(),
+          sexual_orientation: settingsSexualOrientation.trim(),
+          interested_in_seeing: settingsInterestedIn.join(", "),
+        },
+      });
+      if (error) throw new Error(error.message);
+
+      // Update local title immediately; also keeps state consistent when we exit settings.
+      setFirstName(settingsFirstName.trim());
+      setLastName(settingsLastName.trim());
+      setIsSettingsOpen(false);
+      setInfoMessage("Settings saved.");
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : "Could not save settings.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <ScrollView
       style={styles.scroll}
       contentContainerStyle={styles.container}
       keyboardShouldPersistTaps="handled"
     >
-      <View style={styles.header}>
-        <View style={styles.avatarContainer}>
-          <View style={styles.avatarWrap}>
-            <Pressable
-              style={styles.avatar}
-              onPress={() => openPickerForSlot(0)}
-            >
-              {primaryPhoto ? (
-                <Image
-                  source={{ uri: primaryPhoto.displayUrl }}
-                  style={styles.avatarImage}
-                />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarInitials}>
-                    {(firstName?.[0] ?? "").toUpperCase() ||
-                      (user?.email?.[0] ?? "?").toUpperCase()}
-                  </Text>
-                </View>
-              )}
-            </Pressable>
-            <View style={styles.avatarEditBadge}>
-              <Text style={styles.avatarEditBadgeText}>✎</Text>
-            </View>
-          </View>
-        </View>
-        <Text style={styles.title}>
-          {firstName || lastName
-            ? `${firstName} ${lastName}`.trim()
-            : user?.email ?? "Profile"}
-        </Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Name</Text>
-        <View style={styles.nameRow}>
-          <TextInput
-            placeholder="First name"
-            placeholderTextColor={colors.mutedText}
-            style={[styles.input, styles.nameInput]}
-            value={firstName}
-            onChangeText={setFirstName}
-          />
-          <TextInput
-            placeholder="Last name"
-            placeholderTextColor={colors.mutedText}
-            style={[styles.input, styles.nameInput]}
-            value={lastName}
-            onChangeText={setLastName}
-          />
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Account</Text>
-        <Text style={styles.label}>Email</Text>
-        <Text style={styles.readonly}>{email}</Text>
-        <Text style={styles.label}>Date of birth</Text>
-        <Text style={styles.readonly}>
-          {(metadata.date_of_birth as string) ?? "Not set"}
-        </Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Photos</Text>
-        <View style={styles.grid}>
-          {isLoadingPhotos ? (
-            <View style={styles.photosLoadingOverlay}>
-              <ActivityIndicator color={colors.text} />
-            </View>
-          ) : null}
-          {PHOTO_SLOTS.map((slot, index) => {
-            const photo = photos[index];
-            return (
-              <Pressable
-                key={slot}
-                style={styles.photoSlot}
-                onPress={() => openPickerForSlot(index)}
-              >
-                {photo ? (
-                  <Image
-                    source={{ uri: photo.displayUrl }}
-                    style={styles.photoImage}
-                  />
+      <View style={[styles.headerRow, { paddingTop: insets.top ? insets.top : 0 }]}>
+        <View style={styles.headerLeft}>
+          <View style={styles.avatarContainer}>
+            <View style={styles.avatarWrap}>
+              <Pressable style={styles.avatar} onPress={() => openPickerForSlot(0)}>
+                {primaryPhoto ? (
+                  <Image source={{ uri: primaryPhoto.displayUrl }} style={styles.avatarImage} />
                 ) : (
-                  <View style={styles.photoPlaceholder}>
-                    <Text style={styles.photoPlaceholderIcon}>＋</Text>
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarInitials}>
+                      {(firstName?.[0] ?? "").toUpperCase() ||
+                        (user?.email?.[0] ?? "?").toUpperCase()}
+                    </Text>
                   </View>
                 )}
-                <View style={styles.photoAddBadge}>
-                  <Text style={styles.photoAddBadgeText}>+</Text>
-                </View>
               </Pressable>
-            );
-          })}
+              <View style={styles.avatarEditBadge}>
+                <Text style={styles.avatarEditBadgeText}>✎</Text>
+              </View>
+            </View>
+          </View>
+          <Text style={styles.title}>
+            {firstName || lastName ? `${firstName} ${lastName}`.trim() : user?.email ?? "Profile"}
+          </Text>
         </View>
+
+        <Pressable
+          style={styles.menuButton}
+          onPress={() => {
+            setErrorMessage("");
+            setInfoMessage("");
+            setIsSettingsOpen(true);
+          }}
+          hitSlop={12}
+          accessibilityRole="button"
+        >
+          <Text style={styles.menuButtonText}>≡</Text>
+        </Pressable>
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Tickets</Text>
-        {isLoadingTickets ? (
-          <ActivityIndicator color={colors.text} />
-        ) : (
-          <>
-            <Text style={styles.ticketSectionTitle}>Current tickets</Text>
-            {activeTickets.length > 0 ? (
-              activeTickets.map((ticket) => (
-                <View key={ticket.id} style={styles.ticketCard}>
-                  <Text style={styles.ticketVenue}>{ticket.promotion.business_name}</Text>
-                  <Text style={styles.ticketMeta}>
-                    {ticket.promotion.category} • {formatClaimedDate(ticket.claimed_at)}
+      {isSettingsOpen ? (
+        <>
+          <View style={styles.settingsTopBar}>
+            <Pressable
+              style={styles.previousButton}
+              onPress={() => {
+                setIsSettingsOpen(false);
+                setErrorMessage("");
+                setInfoMessage("");
+              }}
+              hitSlop={10}
+            >
+              <Ionicons name="chevron-back" size={18} color={colors.text} />
+              <Text style={styles.previousButtonText}>Previous</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Name</Text>
+            <View style={styles.nameRow}>
+              <TextInput
+                placeholder="First name"
+                placeholderTextColor={colors.mutedText}
+                style={[styles.input, styles.nameInput]}
+                value={settingsFirstName}
+                onChangeText={setSettingsFirstName}
+              />
+              <TextInput
+                placeholder="Last name"
+                placeholderTextColor={colors.mutedText}
+                style={[styles.input, styles.nameInput]}
+                value={settingsLastName}
+                onChangeText={setSettingsLastName}
+              />
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Account</Text>
+            <Text style={styles.label}>Email</Text>
+            <Text style={styles.readonly}>{email}</Text>
+            <Text style={styles.label}>Date of birth</Text>
+            <Text style={styles.readonly}>
+              {(metadata.date_of_birth as string) ?? "Not set"}
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Preferences</Text>
+
+            <Text style={styles.label}>Gender</Text>
+            <View style={styles.chipRow}>
+              {GENDER_OPTIONS.map((option) => (
+                <Pressable
+                  key={option}
+                  style={[styles.chip, settingsGender === option && styles.chipSelected]}
+                  onPress={() => setSettingsGender(option)}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      settingsGender === option && styles.chipTextSelected,
+                    ]}
+                  >
+                    {option}
                   </Text>
-                  <Text style={styles.ticketDescription}>{ticket.promotion.description}</Text>
-                </View>
-              ))
-            ) : (
-              <Text style={styles.ticketEmpty}>No active tickets.</Text>
-            )}
+                </Pressable>
+              ))}
+            </View>
 
-            <Text style={styles.ticketSectionTitle}>Past tickets</Text>
-            {pastTickets.length > 0 ? (
-              pastTickets.map((ticket) => (
-                <View key={ticket.id} style={styles.ticketCard}>
-                  <Text style={styles.ticketVenue}>{ticket.promotion.business_name}</Text>
-                  <Text style={styles.ticketMeta}>
-                    {ticket.promotion.category} • {formatClaimedDate(ticket.claimed_at)}
+            <Text style={styles.label}>Sexual orientation</Text>
+            <View style={styles.chipRow}>
+              {ORIENTATION_OPTIONS.map((option) => (
+                <Pressable
+                  key={option}
+                  style={[
+                    styles.chip,
+                    settingsSexualOrientation === option && styles.chipSelected,
+                  ]}
+                  onPress={() => setSettingsSexualOrientation(option)}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      settingsSexualOrientation === option && styles.chipTextSelected,
+                    ]}
+                  >
+                    {option}
                   </Text>
-                  <Text style={styles.ticketDescription}>{ticket.promotion.description}</Text>
-                </View>
-              ))
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.label}>Who you’re interested in seeing</Text>
+            <View style={styles.hintRow}>
+              <Text style={styles.hintText}>Select one or more. “Everyone” clears other choices.</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {INTERESTED_IN_OPTIONS.map((option) => {
+                const selected = settingsInterestedIn.includes(option);
+                return (
+                  <Pressable
+                    key={option}
+                    style={[styles.chip, selected && styles.chipSelected]}
+                    onPress={() => toggleInterestedIn(option)}
+                  >
+                    <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                      {option}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+          {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
+
+          <Pressable
+            style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
+            onPress={handleSaveSettings}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <ActivityIndicator color={colors.text} />
             ) : (
-              <Text style={styles.ticketEmpty}>No past tickets yet.</Text>
+              <Text style={styles.saveButtonText}>Save changes</Text>
             )}
-          </>
-        )}
-      </View>
+          </Pressable>
 
-      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
-      {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
+          <Text style={styles.logout} onPress={() => signOut()}>
+            Sign out
+          </Text>
+        </>
+      ) : (
+        <>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Photos</Text>
+            <View style={styles.grid}>
+              {isLoadingPhotos ? (
+                <View style={styles.photosLoadingOverlay}>
+                  <ActivityIndicator color={colors.text} />
+                </View>
+              ) : null}
+              {PHOTO_SLOTS.map((slot, index) => {
+                const photo = photos[index];
+                return (
+                  <Pressable
+                    key={slot}
+                    style={styles.photoSlot}
+                    onPress={() => openPickerForSlot(index)}
+                  >
+                    {photo ? (
+                      <Image source={{ uri: photo.displayUrl }} style={styles.photoImage} />
+                    ) : (
+                      <View style={styles.photoPlaceholder}>
+                        <Text style={styles.photoPlaceholderIcon}>＋</Text>
+                      </View>
+                    )}
+                    <View style={styles.photoAddBadge}>
+                      <Text style={styles.photoAddBadgeText}>+</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
 
-      <Pressable
-        style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
-        onPress={handleSave}
-        disabled={isSaving}
-      >
-        {isSaving ? (
-          <ActivityIndicator color={colors.text} />
-        ) : (
-          <Text style={styles.saveButtonText}>Save changes</Text>
-        )}
-      </Pressable>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Tickets</Text>
+            {isLoadingTickets ? (
+              <ActivityIndicator color={colors.text} />
+            ) : (
+              <>
+                <Text style={styles.ticketSectionTitle}>Current tickets</Text>
+                {activeTickets.length > 0 ? (
+                  activeTickets.map((ticket) => (
+                    <View key={ticket.id} style={styles.ticketCard}>
+                      <Text style={styles.ticketVenue}>{ticket.promotion.business_name}</Text>
+                      <Text style={styles.ticketMeta}>
+                        {ticket.promotion.category} • {formatClaimedDate(ticket.claimed_at)}
+                      </Text>
+                      <Text style={styles.ticketDescription}>{ticket.promotion.description}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.ticketEmpty}>No active tickets.</Text>
+                )}
 
-      <Text style={styles.logout} onPress={() => signOut()}>
-        Sign out
-      </Text>
+                <Text style={styles.ticketSectionTitle}>Past tickets</Text>
+                {pastTickets.length > 0 ? (
+                  pastTickets.map((ticket) => (
+                    <View key={ticket.id} style={styles.ticketCard}>
+                      <Text style={styles.ticketVenue}>{ticket.promotion.business_name}</Text>
+                      <Text style={styles.ticketMeta}>
+                        {ticket.promotion.category} • {formatClaimedDate(ticket.claimed_at)}
+                      </Text>
+                      <Text style={styles.ticketDescription}>{ticket.promotion.description}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.ticketEmpty}>No past tickets yet.</Text>
+                )}
+              </>
+            )}
+          </View>
+        </>
+      )}
+
+      {!isSettingsOpen ? (
+        <>
+          {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+          {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
+
+          <Pressable
+            style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
+            onPress={handleSave}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <ActivityIndicator color={colors.text} />
+            ) : (
+              <Text style={styles.saveButtonText}>Save changes</Text>
+            )}
+          </Pressable>
+
+          <Text style={styles.logout} onPress={() => signOut()}>
+            Sign out
+          </Text>
+        </>
+      ) : null}
     </ScrollView>
   );
 }
@@ -472,10 +695,58 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 12,
   },
-  header: {
+  headerRow: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerLeft: {
     alignItems: "center",
     marginBottom: 4,
     gap: 8,
+  },
+  menuButton: {
+    position: "absolute",
+    right: 0,
+    top: 6,
+    height: 44,
+    width: 44,
+    borderRadius: 22,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 6,
+  },
+  menuButtonText: {
+    color: colors.text,
+    fontSize: 24,
+    fontFamily: typography.fontFamily,
+    fontWeight: "700",
+    marginTop: -2,
+  },
+  settingsTopBar: {
+    marginTop: 2,
+    marginBottom: 2,
+  },
+  previousButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  previousButtonText: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+    fontWeight: "700",
   },
   title: {
     color: colors.text,
@@ -686,6 +957,42 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily,
     fontSize: 13,
     marginBottom: 4,
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 6,
+  },
+  hintRow: {
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  hintText: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 13,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  chipSelected: {
+    borderColor: colors.text,
+    backgroundColor: colors.surface,
+  },
+  chipText: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+  },
+  chipTextSelected: {
+    color: colors.text,
+    fontWeight: "700",
   },
   saveButton: {
     alignItems: "center",
