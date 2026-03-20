@@ -10,6 +10,7 @@ import {
 } from "react-native";
 
 import { useAuth } from "@/src/providers/AuthProvider";
+import { supabase } from "@/src/lib/supabase";
 import { colors } from "@/src/theme/colors";
 import { typography } from "@/src/theme/typography";
 
@@ -25,6 +26,8 @@ export default function SignInScreen() {
     setErrorMessage("");
     setIsSubmitting(true);
     try {
+      // Clear any existing session first so Explore/feed never mixes the previous user.
+      await supabase.auth.signOut().catch(() => undefined);
       await signIn(email.trim(), password);
       router.replace("/");
     } catch (error) {

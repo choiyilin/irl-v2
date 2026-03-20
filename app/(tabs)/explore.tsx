@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '@/src/providers/AuthProvider';
 import { supabase } from '@/src/lib/supabase';
@@ -22,18 +14,11 @@ type ExploreProfile = {
   age: number | null;
 };
 
-type ProfilePhotoRow = {
-  slot_index: number;
-  storage_path: string;
-};
-
-const PROFILE_PHOTOS_BUCKET = 'profile-photos';
-
 export default function ExploreScreen() {
   const { user } = useAuth();
+  const userId = user?.id;
   const [profiles, setProfiles] = useState<ExploreProfile[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [activePhotoUrls, setActivePhotoUrls] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -42,7 +27,12 @@ export default function ExploreScreen() {
   const activeProfile = useMemo(() => profiles[currentIndex] ?? null, [currentIndex, profiles]);
 
   const loadExploreFeed = useCallback(async () => {
-    if (!user) return;
+    if (!userId) {
+      setProfiles([]);
+      setCurrentIndex(0);
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
     setErrorMessage('');
@@ -50,8 +40,8 @@ export default function ExploreScreen() {
     try {
       const [{ data: allProfiles, error: profilesError }, { data: likedRows, error: likesError }] =
         await Promise.all([
-          supabase.from('profiles').select('id, display_name, bio, city, age').neq('id', user.id),
-          supabase.from('profile_likes').select('liked_id').eq('liker_id', user.id),
+          supabase.from('profiles').select('id, display_name, bio, city, age').neq('id', userId),
+          supabase.from('profile_likes').select('liked_id').eq('liker_id', userId),
         ]);
 
       if (profilesError) throw profilesError;
@@ -59,7 +49,9 @@ export default function ExploreScreen() {
 
       const likedIdSet = new Set((likedRows ?? []).map((row) => row.liked_id as string));
       const filteredProfiles = (allProfiles ?? []).filter(
-        (profile) => !likedIdSet.has(profile.id as string),
+        (profile) =>
+          profile.id !== userId &&
+          !likedIdSet.has(profile.id as string),
       ) as ExploreProfile[];
 
       setProfiles(filteredProfiles);
@@ -69,49 +61,11 @@ export default function ExploreScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
     loadExploreFeed();
   }, [loadExploreFeed]);
-
-  useEffect(() => {
-    const loadActiveProfilePhotos = async () => {
-      if (!activeProfile?.id) {
-        setActivePhotoUrls([]);
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from('profile_photos')
-          .select('slot_index, storage_path')
-          .eq('user_id', activeProfile.id)
-          .order('slot_index', { ascending: true });
-        if (error) throw error;
-
-        const signedUrls = await Promise.all(
-          ((data ?? []) as ProfilePhotoRow[]).map(async (photo) => {
-            const { data: signedData, error: signedError } = await supabase.storage
-              .from(PROFILE_PHOTOS_BUCKET)
-              .createSignedUrl(photo.storage_path, 60 * 60);
-
-            if (signedError || !signedData?.signedUrl) {
-              return null;
-            }
-
-            return signedData.signedUrl;
-          }),
-        );
-
-        setActivePhotoUrls(signedUrls.filter((url): url is string => Boolean(url)));
-      } catch {
-        setActivePhotoUrls([]);
-      }
-    };
-
-    loadActiveProfilePhotos();
-  }, [activeProfile?.id]);
 
   const goNextProfile = () => {
     setMatchMessage('');
@@ -123,7 +77,7 @@ export default function ExploreScreen() {
   };
 
   const handleLike = async () => {
-    if (!user || !activeProfile) return;
+    if (!userId || !activeProfile) return;
     setIsSubmitting(true);
     setErrorMessage('');
     setMatchMessage('');
@@ -131,20 +85,20 @@ export default function ExploreScreen() {
     try {
       const { error: likeError } = await supabase
         .from('profile_likes')
-        .insert({ liker_id: user.id, liked_id: activeProfile.id });
+        .insert({ liker_id: userId, liked_id: activeProfile.id });
       if (likeError) throw likeError;
 
       const { data: reverseLike, error: reverseLikeError } = await supabase
         .from('profile_likes')
         .select('liker_id')
         .eq('liker_id', activeProfile.id)
-        .eq('liked_id', user.id)
+        .eq('liked_id', userId)
         .maybeSingle();
       if (reverseLikeError) throw reverseLikeError;
 
       if (reverseLike) {
-        const userA = user.id < activeProfile.id ? user.id : activeProfile.id;
-        const userB = user.id < activeProfile.id ? activeProfile.id : user.id;
+        const userA = userId < activeProfile.id ? userId : activeProfile.id;
+        const userB = userId < activeProfile.id ? activeProfile.id : userId;
 
         const { data: matchRow, error: matchError } = await supabase
           .from('matches')
@@ -154,9 +108,7 @@ export default function ExploreScreen() {
         if (matchError) throw matchError;
         if (!matchRow?.id) throw new Error('Unable to create or find match.');
 
-        setMatchMessage(
-          `It's a match with ${activeProfile.display_name ?? 'this user'}! See them in Chats.`,
-        );
+        setMatchMessage(`It's a match with ${activeProfile.display_name ?? 'this user'}!`);
       }
 
       goNextProfile();
@@ -175,58 +127,27 @@ export default function ExploreScreen() {
     );
   }
 
-  const mainPhotoUrl = activePhotoUrls[0] ?? null;
-  const additionalPhotoUrls = activePhotoUrls.slice(1);
-
   return (
     <View style={styles.container}>
+      <Text style={styles.title}>Explore Profiles</Text>
       {matchMessage ? <Text style={styles.matchBanner}>{matchMessage}</Text> : null}
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
       {activeProfile ? (
         <>
-          <View style={styles.mainPhotoCard}>
-            {mainPhotoUrl ? (
-              <Image source={{ uri: mainPhotoUrl }} style={styles.mainPhoto} />
-            ) : (
-              <View style={[styles.mainPhoto, styles.photoPlaceholder]}>
-                <Text style={styles.photoPlaceholderText}>No profile photo yet</Text>
-              </View>
-            )}
-          </View>
-
-          <View style={styles.infoCard}>
-            <Text style={styles.profileName}>
-              {activeProfile.display_name ?? 'Unnamed profile'}
-              {activeProfile.age ? `, ${activeProfile.age}` : ''}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>{activeProfile.display_name ?? 'Unnamed profile'}</Text>
+            <Text style={styles.metaText}>
+              {[activeProfile.age ? `${activeProfile.age}` : null, activeProfile.city]
+                .filter(Boolean)
+                .join(' • ') || 'Details coming soon'}
             </Text>
-            {activeProfile.city ? <Text style={styles.profileMeta}>Location: {activeProfile.city}</Text> : null}
-            {activeProfile.bio ? <Text style={styles.profileBio}>{activeProfile.bio}</Text> : null}
-          </View>
-
-          <View style={styles.gallerySection}>
-            <Text style={styles.galleryTitle}>More photos</Text>
-            {additionalPhotoUrls.length > 0 ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.galleryRow}>
-                {additionalPhotoUrls.map((photoUrl, index) => (
-                  <Image
-                    key={`${photoUrl}-${index}`}
-                    source={{ uri: photoUrl }}
-                    style={styles.galleryPhoto}
-                  />
-                ))}
-              </ScrollView>
-            ) : (
-              <Text style={styles.galleryEmpty}>No additional photos yet.</Text>
-            )}
+            <Text style={styles.cardBody}>{activeProfile.bio ?? 'No bio yet.'}</Text>
           </View>
 
           <View style={styles.actionRow}>
             <Pressable style={[styles.actionButton, styles.passButton]} onPress={handlePass} disabled={isSubmitting}>
-              <Text style={styles.actionText}>Skip</Text>
+              <Text style={styles.actionText}>Pass</Text>
             </Pressable>
             <Pressable
               style={[styles.actionButton, styles.likeButton, isSubmitting && styles.disabled]}
@@ -237,9 +158,9 @@ export default function ExploreScreen() {
           </View>
         </>
       ) : (
-        <View style={styles.infoCard}>
-          <Text style={styles.profileName}>No more profiles right now</Text>
-          <Text style={styles.profileBio}>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>No more profiles right now</Text>
+          <Text style={styles.cardBody}>
             You have reached the end of your current feed. Check back later for new profiles.
           </Text>
           <Pressable style={[styles.actionButton, styles.likeButton]} onPress={loadExploreFeed}>
@@ -262,72 +183,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mainPhotoCard: {
-    borderRadius: 18,
-    overflow: 'hidden',
+  title: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: '#F6F6F6',
+    padding: 14,
+    gap: 6,
   },
-  mainPhoto: {
-    width: '100%',
-    aspectRatio: 3 / 4,
-  },
-  photoPlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  photoPlaceholderText: {
+  metaText: {
     color: colors.mutedText,
     fontFamily: typography.fontFamily,
     fontSize: 14,
   },
-  infoCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    gap: 8,
-  },
-  profileName: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 32,
-    fontWeight: '700',
-  },
-  profileMeta: {
-    color: colors.mutedText,
-    fontFamily: typography.fontFamily,
-    fontSize: 18,
-  },
-  profileBio: {
+  cardTitle: {
     color: colors.text,
     fontFamily: typography.fontFamily,
     fontSize: 16,
-    lineHeight: 22,
+    fontWeight: '600',
   },
-  gallerySection: {
-    gap: 8,
-  },
-  galleryTitle: {
+  cardBody: {
     color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  galleryRow: {
-    gap: 10,
-  },
-  galleryPhoto: {
-    width: 110,
-    height: 150,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  galleryEmpty: {
-    color: colors.mutedText,
     fontFamily: typography.fontFamily,
     fontSize: 14,
   },
@@ -338,23 +220,23 @@ const styles = StyleSheet.create({
   actionButton: {
     flex: 1,
     borderRadius: 12,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.border,
-    minHeight: 52,
   },
   passButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.background,
   },
   likeButton: {
-    backgroundColor: '#F4D3E0',
+    backgroundColor: colors.surface,
   },
   actionText: {
     color: colors.text,
     fontFamily: typography.fontFamily,
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '600',
   },
   matchBanner: {
     color: colors.text,
@@ -375,4 +257,3 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
 });
-

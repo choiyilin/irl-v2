@@ -22,7 +22,7 @@ type ProfilePhoto = {
   id: string;
   slot_index: number;
   storage_path: string;
-  publicUrl: string;
+  displayUrl: string;
 };
 
 type PromotionTicket = {
@@ -51,6 +51,7 @@ export default function ProfileScreen() {
   const [photos, setPhotos] = useState<(ProfilePhoto | null)[]>(
     PHOTO_SLOTS.map(() => null),
   );
+  const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
@@ -72,34 +73,61 @@ export default function ProfileScreen() {
 
     const loadPhotos = async () => {
       if (!user) return;
+      setIsLoadingPhotos(true);
       const { data, error } = await supabase
         .from("profile_photos")
         .select("id, slot_index, storage_path")
         .eq("user_id", user.id)
         .order("slot_index", { ascending: true });
 
-      if (error || !data) return;
+      if (error || !data) {
+        if (!isCancelled) setIsLoadingPhotos(false);
+        return;
+      }
 
       const next: (ProfilePhoto | null)[] = PHOTO_SLOTS.map(() => null);
-      for (const row of data) {
-        const { data: publicUrl } = supabase.storage
-          .from("profile-photos")
-          .getPublicUrl(row.storage_path);
-        next[row.slot_index - 1] = {
-          id: row.id,
-          slot_index: row.slot_index,
-          storage_path: row.storage_path,
-          publicUrl: publicUrl.publicUrl,
+      const rows = data as Array<{
+        id: string;
+        slot_index: number;
+        storage_path: string;
+      }>;
+
+      try {
+        // Create signed URLs in parallel to avoid a long "empty tiles" period.
+        const signedResults = await Promise.all(
+          rows.map(async (row) => {
+            const { data: signed, error: signedError } = await supabase.storage
+              .from("profile-photos")
+              .createSignedUrl(row.storage_path, 60 * 60);
+
+            if (signedError || !signed) return null;
+            return { row, signedUrl: signed.signedUrl };
+          }),
+        );
+
+        for (const item of signedResults) {
+          if (!item) continue;
+          const { row, signedUrl } = item;
+          next[row.slot_index - 1] = {
+            id: row.id,
+            slot_index: row.slot_index,
+            storage_path: row.storage_path,
+            displayUrl: signedUrl,
+          };
         };
-      }
-      if (!isCancelled) {
-        setPhotos(next);
+
+        if (!isCancelled) setPhotos(next);
+      } catch (e) {
+        // Keep existing photos; spinner stops so UI doesn't feel "broken".
+      } finally {
+        if (!isCancelled) setIsLoadingPhotos(false);
       }
     };
 
     loadPhotos();
     return () => {
       isCancelled = true;
+      setIsLoadingPhotos(false);
     };
   }, [user]);
 
@@ -212,9 +240,12 @@ export default function ProfileScreen() {
         throw new Error(error?.message ?? "Unable to upload image.");
       }
 
-      const { data: publicUrl } = supabase.storage
+      const { data: signed, error: signedError } = await supabase.storage
         .from("profile-photos")
-        .getPublicUrl(data.path);
+        .createSignedUrl(data.path, 60 * 60);
+      if (signedError || !signed) {
+        throw new Error(signedError?.message ?? "Unable to load image preview.");
+      }
 
       setPhotos((prev) => {
         const next = [...prev];
@@ -222,7 +253,7 @@ export default function ProfileScreen() {
           id: prev[index]?.id ?? "",
           slot_index: index + 1,
           storage_path: data.path,
-          publicUrl: publicUrl.publicUrl,
+          displayUrl: signed.signedUrl,
         };
         return next;
       });
@@ -275,27 +306,29 @@ export default function ProfileScreen() {
     >
       <View style={styles.header}>
         <View style={styles.avatarContainer}>
-          <Pressable
-            style={styles.avatar}
-            onPress={() => openPickerForSlot(0)}
-          >
-            {primaryPhoto ? (
-              <Image
-                source={{ uri: primaryPhoto.publicUrl }}
-                style={styles.avatarImage}
-              />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarInitials}>
-                  {(firstName?.[0] ?? "").toUpperCase() ||
-                    (user?.email?.[0] ?? "?").toUpperCase()}
-                </Text>
-              </View>
-            )}
+          <View style={styles.avatarWrap}>
+            <Pressable
+              style={styles.avatar}
+              onPress={() => openPickerForSlot(0)}
+            >
+              {primaryPhoto ? (
+                <Image
+                  source={{ uri: primaryPhoto.displayUrl }}
+                  style={styles.avatarImage}
+                />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarInitials}>
+                    {(firstName?.[0] ?? "").toUpperCase() ||
+                      (user?.email?.[0] ?? "?").toUpperCase()}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
             <View style={styles.avatarEditBadge}>
               <Text style={styles.avatarEditBadgeText}>✎</Text>
             </View>
-          </Pressable>
+          </View>
         </View>
         <Text style={styles.title}>
           {firstName || lastName
@@ -337,6 +370,11 @@ export default function ProfileScreen() {
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Photos</Text>
         <View style={styles.grid}>
+          {isLoadingPhotos ? (
+            <View style={styles.photosLoadingOverlay}>
+              <ActivityIndicator color={colors.text} />
+            </View>
+          ) : null}
           {PHOTO_SLOTS.map((slot, index) => {
             const photo = photos[index];
             return (
@@ -347,7 +385,7 @@ export default function ProfileScreen() {
               >
                 {photo ? (
                   <Image
-                    source={{ uri: photo.publicUrl }}
+                    source={{ uri: photo.displayUrl }}
                     style={styles.photoImage}
                   />
                 ) : (
@@ -355,7 +393,9 @@ export default function ProfileScreen() {
                     <Text style={styles.photoPlaceholderIcon}>＋</Text>
                   </View>
                 )}
-                <Text style={styles.photoLabel}>Photo {slot}</Text>
+                <View style={styles.photoAddBadge}>
+                  <Text style={styles.photoAddBadgeText}>+</Text>
+                </View>
               </Pressable>
             );
           })}
@@ -447,6 +487,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  avatarWrap: {
+    position: "relative",
+  },
   avatar: {
     height: 120,
     width: 120,
@@ -476,8 +519,8 @@ const styles = StyleSheet.create({
   },
   avatarEditBadge: {
     position: "absolute",
-    bottom: 4,
-    right: 4,
+    bottom: -2,
+    right: -2,
     height: 28,
     width: 28,
     borderRadius: 14,
@@ -493,7 +536,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.background,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
@@ -538,6 +581,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   grid: {
+    position: "relative",
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
@@ -554,6 +598,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     padding: 6,
+    backgroundColor: colors.background,
   },
   photoImage: {
     width: "100%",
@@ -568,16 +613,42 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: colors.background,
   },
   photoPlaceholderIcon: {
     color: colors.mutedText,
     fontSize: 24,
   },
-  photoLabel: {
+  photoAddBadge: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    height: 22,
+    width: 22,
+    borderRadius: 11,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  photoAddBadgeText: {
     color: colors.text,
     fontFamily: typography.fontFamily,
-    fontSize: 12,
-    marginTop: 4,
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: -1,
+  },
+  photosLoadingOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    borderRadius: 12,
   },
   ticketSectionTitle: {
     color: colors.text,

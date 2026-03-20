@@ -1,11 +1,13 @@
-import { Redirect, Stack } from 'expo-router';
+import { Redirect, Stack, useSegments } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 
+import { hasFinishedAppOnboarding } from '@/src/lib/authRouting';
 import { useAuth } from '@/src/providers/AuthProvider';
 import { colors } from '@/src/theme/colors';
 
 export default function AuthLayout() {
   const { isLoading, session } = useAuth();
+  const segments = useSegments();
 
   if (isLoading) {
     return (
@@ -22,9 +24,16 @@ export default function AuthLayout() {
   }
 
   if (session) {
-    // If user is already signed in, send them through the root index routing
-    // (which decides tabs vs onboarding) instead of keeping them on auth screens.
-    return <Redirect href="/" />;
+    if (hasFinishedAppOnboarding(session.user)) {
+      return <Redirect href="/" />;
+    }
+
+    // Mid sign-up: session exists but profile onboarding (gender, orientation, etc.) not finished.
+    // Stay on sign-up; only redirect from sign-in (etc.) to sign-up.
+    const onSignUp = segments.includes('sign-up');
+    if (!onSignUp) {
+      return <Redirect href="/(auth)/sign-up" />;
+    }
   }
 
   return (
