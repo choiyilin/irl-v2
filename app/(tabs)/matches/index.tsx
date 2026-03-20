@@ -72,15 +72,15 @@ export default function MatchesScreen() {
 
       const { data: photoRows, error: photosError } = await supabase
         .from('profile_photos')
-        .select('user_id, slot_index, storage_path')
+        .select('user_id, storage_path')
         .in('user_id', partnerIds)
-        .order('slot_index', { ascending: true });
+        .eq('slot_index', 1);
       if (photosError) throw photosError;
 
       const pathByUser: Record<string, string> = {};
       for (const row of photoRows ?? []) {
         const uid = row.user_id as string;
-        if (!pathByUser[uid]) pathByUser[uid] = row.storage_path as string;
+        pathByUser[uid] = row.storage_path as string;
       }
 
       const urlByUser: Record<string, string> = {};

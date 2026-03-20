@@ -60,22 +60,16 @@ function formatClaimedDate(iso: string) {
   return `Claimed ${date.toLocaleDateString()}`;
 }
 
-async function syncProfilePhotosTable(userId: string, slotPhotos: (ProfilePhoto | null)[]) {
-  const existing = slotPhotos.filter((p): p is ProfilePhoto => !!p);
-  const { error: deleteError } = await supabase
-    .from("profile_photos")
-    .delete()
-    .eq("user_id", userId);
-  if (deleteError) throw new Error(deleteError.message);
-  if (existing.length > 0) {
-    const records = existing.map((p) => ({
+async function persistPhotoSlot(userId: string, slotIndex: number, storagePath: string) {
+  const { error } = await supabase.from("profile_photos").upsert(
+    {
       user_id: userId,
-      slot_index: p.slot_index,
-      storage_path: p.storage_path,
-    }));
-    const { error: insertError } = await supabase.from("profile_photos").insert(records);
-    if (insertError) throw new Error(insertError.message);
-  }
+      slot_index: slotIndex,
+      storage_path: storagePath,
+    },
+    { onConflict: "user_id,slot_index" },
+  );
+  if (error) throw new Error(error.message);
 }
 
 export default function ProfileScreen() {
@@ -87,7 +81,6 @@ export default function ProfileScreen() {
     PHOTO_SLOTS.map(() => null),
   );
   const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
   const [tickets, setTickets] = useState<PromotionTicket[]>([]);
@@ -153,14 +146,15 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     let isCancelled = false;
+    const userId = user?.id;
 
     const loadPhotos = async () => {
-      if (!user) return;
+      if (!userId) return;
       setIsLoadingPhotos(true);
       const { data, error } = await supabase
         .from("profile_photos")
         .select("id, slot_index, storage_path")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .order("slot_index", { ascending: true });
 
       if (error || !data) {
@@ -212,13 +206,14 @@ export default function ProfileScreen() {
       isCancelled = true;
       setIsLoadingPhotos(false);
     };
-  }, [user]);
+  }, [user?.id]);
 
   useEffect(() => {
     let isCancelled = false;
+    const userId = user?.id;
 
     const loadTickets = async () => {
-      if (!user) {
+      if (!userId) {
         if (!isCancelled) setTickets([]);
         return;
       }
@@ -229,7 +224,7 @@ export default function ProfileScreen() {
         .select(
           "id, claimed_at, business_promotions(id, business_name, category, description, ends_at, is_active)",
         )
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .order("claimed_at", { ascending: false });
 
       if (error || !data) {
@@ -272,7 +267,7 @@ export default function ProfileScreen() {
     return () => {
       isCancelled = true;
     };
-  }, [user]);
+  }, [user?.id]);
 
   const activeTickets = useMemo(() => {
     const now = Date.now();
@@ -292,10 +287,8 @@ export default function ProfileScreen() {
     });
   }, [tickets]);
 
-  const openPickerForSlot = async (
-    index: number,
-    options?: { persistAfter?: boolean },
-  ) => {
+  const openPickerForSlot = async (index: number) => {
+    if (!user) return;
     setErrorMessage("");
     setInfoMessage("");
 
@@ -308,13 +301,25 @@ export default function ProfileScreen() {
     if (result.canceled) return;
 
     const uri = result.assets?.[0]?.uri;
-    if (!uri || !user) return;
+    if (!uri) return;
+
+    let optimisticSnapshot: (ProfilePhoto | null)[] = [];
+    setPhotos((prev) => {
+      optimisticSnapshot = [...prev];
+      optimisticSnapshot[index] = {
+        id: prev[index]?.id ?? "",
+        slot_index: index + 1,
+        storage_path: prev[index]?.storage_path ?? "",
+        // Show local preview immediately while upload runs.
+        displayUrl: uri,
+      };
+      return optimisticSnapshot;
+    });
 
     try {
       const response = await fetch(uri);
       const blob = await response.blob();
-      const fileExt = "jpg";
-      const path = `${user.id}/slot-${index + 1}-${Date.now()}.${fileExt}`;
+      const path = `${user.id}/slot-${index + 1}-${Date.now()}.jpg`;
 
       const { data, error } = await supabase.storage
         .from("profile-photos")
@@ -322,16 +327,7 @@ export default function ProfileScreen() {
           contentType: blob.type || "image/jpeg",
           upsert: false,
         });
-      if (error || !data) {
-        throw new Error(error?.message ?? "Unable to upload image.");
-      }
-
-      const { data: signed, error: signedError } = await supabase.storage
-        .from("profile-photos")
-        .createSignedUrl(data.path, 60 * 60);
-      if (signedError || !signed) {
-        throw new Error(signedError?.message ?? "Unable to load image preview.");
-      }
+      if (error || !data) throw new Error(error?.message ?? "Could not upload photo.");
 
       let nextSnapshot: (ProfilePhoto | null)[] = [];
       setPhotos((prev) => {
@@ -340,78 +336,20 @@ export default function ProfileScreen() {
           id: prev[index]?.id ?? "",
           slot_index: index + 1,
           storage_path: data.path,
-          displayUrl: signed.signedUrl,
+          // Keep local URI so the preview remains stable immediately after upload.
+          displayUrl: uri,
         };
         return nextSnapshot;
       });
 
-      if (options?.persistAfter && user) {
-        try {
-          await syncProfilePhotosTable(user.id, nextSnapshot);
-          const { error: metaError } = await supabase.auth.updateUser({
-            data: {
-              has_uploaded_photos: nextSnapshot.some((p) => p !== null),
-            },
-          });
-          if (metaError) throw new Error(metaError.message);
-          setInfoMessage("Profile picture updated.");
-        } catch (e) {
-          setErrorMessage(
-            e instanceof Error ? e.message : "Could not save profile picture.",
-          );
-        }
-      }
-    } catch (e) {
-      setErrorMessage(
-        e instanceof Error ? e.message : "Could not update photo.",
-      );
-    }
-  };
-
-  const handleSaveSettings = async () => {
-    if (!user) return;
-    setErrorMessage("");
-    setInfoMessage("");
-    if (!settingsGender.trim()) {
-      setErrorMessage("Please select your gender.");
-      return;
-    }
-    if (!settingsSexualOrientation.trim()) {
-      setErrorMessage("Please select your sexual orientation.");
-      return;
-    }
-    if (settingsInterestedIn.length === 0) {
-      setErrorMessage("Please select who you’re interested in seeing.");
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      const existing = photos.filter((p): p is ProfilePhoto => !!p);
-
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          first_name: settingsFirstName.trim() || null,
-          last_name: settingsLastName.trim() || null,
-          gender: settingsGender.trim(),
-          sexual_orientation: settingsSexualOrientation.trim(),
-          interested_in_seeing: settingsInterestedIn.join(", "),
-          has_uploaded_photos: existing.length > 0,
-        },
+      await persistPhotoSlot(user.id, index + 1, data.path);
+      const { error: metaError } = await supabase.auth.updateUser({
+        data: { has_uploaded_photos: nextSnapshot.some((p) => p !== null) },
       });
-      if (error) throw new Error(error.message);
-
-      await syncProfilePhotosTable(user.id, photos);
-
-      // Update local title immediately; also keeps state consistent when we exit settings.
-      setFirstName(settingsFirstName.trim());
-      setLastName(settingsLastName.trim());
-      setIsSettingsOpen(false);
-      setInfoMessage("Profile updated.");
+      if (metaError) throw new Error(metaError.message);
+      setInfoMessage("Photo updated.");
     } catch (e) {
-      setErrorMessage(e instanceof Error ? e.message : "Could not save settings.");
-    } finally {
-      setIsSaving(false);
+      setErrorMessage(e instanceof Error ? e.message : "Could not update photo.");
     }
   };
 
@@ -428,13 +366,7 @@ export default function ProfileScreen() {
         <View style={styles.headerLeft}>
           <View style={styles.avatarContainer}>
             <View style={styles.avatarWrap}>
-              <Pressable
-                style={styles.avatar}
-                onPress={() => openPickerForSlot(0, { persistAfter: true })}
-                disabled={isSettingsOpen}
-                accessibilityRole="button"
-                accessibilityLabel="Change profile picture"
-              >
+              <View style={styles.avatar}>
                 {primaryPhoto ? (
                   <Image source={{ uri: primaryPhoto.displayUrl }} style={styles.avatarImage} />
                 ) : (
@@ -445,18 +377,7 @@ export default function ProfileScreen() {
                     </Text>
                   </View>
                 )}
-              </Pressable>
-              {!isSettingsOpen ? (
-                <Pressable
-                  style={styles.avatarEditIconButton}
-                  onPress={() => openPickerForSlot(0, { persistAfter: true })}
-                  hitSlop={12}
-                  accessibilityRole="button"
-                  accessibilityLabel="Change profile picture"
-                >
-                  <Ionicons name="camera-outline" size={16} color={colors.text} />
-                </Pressable>
-              ) : null}
+              </View>
             </View>
           </View>
           <Text style={styles.title}>
@@ -537,17 +458,16 @@ export default function ProfileScreen() {
                     key={slot}
                     style={styles.photoSlot}
                     onPress={() => openPickerForSlot(index)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit photo ${slot}`}
                   >
                     {photo ? (
                       <Image source={{ uri: photo.displayUrl }} style={styles.photoImage} />
                     ) : (
                       <View style={styles.photoPlaceholder}>
-                        <Text style={styles.photoPlaceholderIcon}>＋</Text>
+                        <Text style={styles.photoPlaceholderIcon}>No photo</Text>
                       </View>
                     )}
-                    <View style={styles.photoAddBadge}>
-                      <Text style={styles.photoAddBadgeText}>+</Text>
-                    </View>
                   </Pressable>
                 );
               })}
@@ -654,18 +574,6 @@ export default function ProfileScreen() {
 
           {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
           {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
-
-          <Pressable
-            style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
-            onPress={handleSaveSettings}
-            disabled={isSaving}
-          >
-            {isSaving ? (
-              <ActivityIndicator color={colors.text} />
-            ) : (
-              <Text style={styles.saveButtonText}>Save changes</Text>
-            )}
-          </Pressable>
 
           <Text style={[styles.logout, styles.logoutInSettings]} onPress={() => signOut()}>
             Sign out
@@ -795,25 +703,6 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
   },
-  avatarEditIconButton: {
-    position: "absolute",
-    right: -2,
-    bottom: -2,
-    height: 30,
-    width: 30,
-    borderRadius: 15,
-    backgroundColor: colors.background,
-    borderWidth: 2,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.12,
-    shadowRadius: 2,
-    elevation: 2,
-  },
   avatar: {
     height: 120,
     width: 120,
@@ -902,19 +791,19 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     overflow: "hidden",
     alignItems: "center",
-    justifyContent: "space-between",
-    padding: 6,
+    justifyContent: "center",
+    padding: 0,
     backgroundColor: colors.background,
   },
   photoImage: {
     width: "100%",
-    height: "75%",
-    borderRadius: 8,
+    height: "100%",
+    borderRadius: 0,
   },
   photoPlaceholder: {
     width: "100%",
-    height: "75%",
-    borderRadius: 8,
+    height: "100%",
+    borderRadius: 0,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: "center",
@@ -923,27 +812,8 @@ const styles = StyleSheet.create({
   },
   photoPlaceholderIcon: {
     color: colors.mutedText,
-    fontSize: 24,
-  },
-  photoAddBadge: {
-    position: "absolute",
-    bottom: 8,
-    right: 8,
-    height: 22,
-    width: 22,
-    borderRadius: 11,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  photoAddBadgeText: {
-    color: colors.text,
+    fontSize: 13,
     fontFamily: typography.fontFamily,
-    fontSize: 16,
-    fontWeight: "700",
-    marginTop: -1,
   },
   photosLoadingOverlay: {
     position: "absolute",
@@ -1049,23 +919,6 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: colors.text,
     fontWeight: "700",
-  },
-  saveButton: {
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    minHeight: 48,
-    justifyContent: "center",
-    marginTop: 8,
-  },
-  saveButtonDisabled: {
-    opacity: 0.5,
-  },
-  saveButtonText: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 16,
-    fontWeight: "600",
   },
   logout: {
     color: colors.text,

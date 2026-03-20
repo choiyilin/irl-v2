@@ -89,9 +89,9 @@ export default function MatchProfileScreen() {
 
       const { data: photoRows, error: photoError } = await supabase
         .from('profile_photos')
-        .select('storage_path, slot_index')
+        .select('storage_path')
         .eq('user_id', partnerId)
-        .order('slot_index', { ascending: true })
+        .eq('slot_index', 1)
         .limit(1);
       if (photoError) throw photoError;
 

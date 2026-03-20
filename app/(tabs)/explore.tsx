@@ -99,18 +99,15 @@ export default function ExploreScreen() {
 
       const { data: photoRows, error: photosError } = await supabase
         .from('profile_photos')
-        .select('user_id, slot_index, storage_path')
+        .select('user_id, storage_path')
         .in('user_id', ids)
-        .order('slot_index', { ascending: true });
+        .eq('slot_index', 1);
 
       if (photosError) throw photosError;
 
       const pathMap: Record<string, string> = {};
       for (const row of photoRows ?? []) {
-        const uid = row.user_id as string;
-        if (!pathMap[uid]) {
-          pathMap[uid] = row.storage_path as string;
-        }
+        pathMap[row.user_id as string] = row.storage_path as string;
       }
       setPhotoPathByUserId(pathMap);
     } catch (error) {

@@ -100,9 +100,9 @@ export default function ChatScreen() {
 
       const { data: profilePhotoRows, error: profilePhotosError } = await supabase
         .from('profile_photos')
-        .select('user_id, slot_index, storage_path')
+        .select('user_id, storage_path')
         .in('user_id', partnerIds)
-        .order('slot_index', { ascending: true });
+        .eq('slot_index', 1);
       if (profilePhotosError) throw profilePhotosError;
 
       const { data: roomRows, error: roomError } = await supabase
@@ -147,10 +147,7 @@ export default function ChatScreen() {
 
       const firstPhotoPathByUserId = new Map<string, string>();
       for (const row of profilePhotoRows ?? []) {
-        const userId = row.user_id as string;
-        if (!firstPhotoPathByUserId.has(userId)) {
-          firstPhotoPathByUserId.set(userId, row.storage_path as string);
-        }
+        firstPhotoPathByUserId.set(row.user_id as string, row.storage_path as string);
       }
 
       const avatarUrlByUserId = new Map<string, string>();
