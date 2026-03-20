@@ -466,7 +466,7 @@ export default function ProfileScreen() {
 
         {!isSettingsOpen ? (
           <Pressable
-            style={styles.menuButton}
+            style={styles.editProfileLink}
             onPress={() => {
               setErrorMessage("");
               setInfoMessage("");
@@ -474,9 +474,9 @@ export default function ProfileScreen() {
             }}
             hitSlop={12}
             accessibilityRole="button"
-            accessibilityLabel="Open settings"
+            accessibilityLabel="Edit profile"
           >
-            <Text style={styles.menuButtonText}>≡</Text>
+            <Text style={styles.editProfileLinkText}>Edit profile</Text>
           </Pressable>
         ) : null}
       </View>
@@ -747,26 +747,19 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     gap: 8,
   },
-  menuButton: {
+  editProfileLink: {
     position: "absolute",
     right: 0,
-    top: 6,
-    height: 44,
-    width: 44,
-    borderRadius: 22,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
+    top: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     justifyContent: "center",
-    marginTop: 6,
   },
-  menuButtonText: {
-    color: colors.text,
-    fontSize: 24,
+  editProfileLinkText: {
+    color: colors.brandPink,
+    fontSize: 15,
     fontFamily: typography.fontFamily,
-    fontWeight: "700",
-    marginTop: -2,
+    fontWeight: "600",
   },
   settingsTopBar: {
     marginTop: 4,

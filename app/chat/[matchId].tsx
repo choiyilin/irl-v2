@@ -168,11 +168,22 @@ export default function MatchChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
         style={styles.container}>
-        <View style={styles.headerRow}>
-          <Pressable style={styles.backButton} onPress={() => router.push('/(tabs)/chat')}>
-            <Ionicons name="arrow-back" size={18} color={colors.text} />
-          </Pressable>
-          <Text style={styles.title}>Match Chat</Text>
+        <View style={styles.headerBlock}>
+          <View style={styles.headerRow}>
+            <Pressable
+              style={({ pressed }) => [styles.backPill, pressed && styles.backPillPressed]}
+              onPress={() => router.push('/(tabs)/chat')}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Back to messages">
+              <Ionicons name="chevron-back" size={24} color={colors.text} />
+            </Pressable>
+            <Text style={styles.title} numberOfLines={1}>
+              Match Chat
+            </Text>
+            <View style={styles.headerTitleSpacer} />
+          </View>
+          <View style={styles.headerDivider} />
         </View>
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         <FlatList
@@ -221,26 +232,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 24,
-    fontWeight: '700',
+  headerBlock: {
+    marginBottom: 4,
   },
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
-  backButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderColor: colors.border,
-    borderWidth: 1,
-    backgroundColor: colors.surface,
+  backPill: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  backPillPressed: {
+    opacity: 0.72,
+    backgroundColor: 'rgba(0, 0, 0, 0.09)',
+  },
+  headerTitleSpacer: {
+    width: 44,
+    height: 44,
+  },
+  title: {
+    flex: 1,
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  headerDivider: {
+    marginTop: 12,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    opacity: 0.85,
   },
   errorText: {
     color: colors.text,

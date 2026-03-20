@@ -41,7 +41,9 @@ export default function SignInScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>In Real Love</Text>
+      <Text style={styles.title} accessibilityLabel="IRL, In Real Love">
+        IRL
+      </Text>
       <Text style={styles.subtitle}>
         Sign in to start exploring new connections.
       </Text>
@@ -95,10 +97,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   title: {
-    color: colors.text,
+    color: colors.brandPink,
     fontFamily: typography.fontFamily,
-    fontSize: 32,
-    fontWeight: "700",
+    fontSize: 44,
+    fontWeight: "800",
+    letterSpacing: -0.8,
+    lineHeight: 50,
   },
   subtitle: {
     color: colors.mutedText,

@@ -1,3 +1,4 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
@@ -11,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Linking from "expo-linking";
 
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -109,6 +110,7 @@ const INTERESTED_IN_OPTIONS = [
 export default function SignUpScreen() {
   const { signIn, isConfigured, session } = useAuth();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [step, setStep] = useState<Step>("name");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -461,11 +463,16 @@ export default function SignUpScreen() {
 
   return (
     <View style={styles.screenRoot}>
-      <SafeAreaView edges={["top"]} style={styles.topBar}>
-        <Pressable onPress={handleBackPress} style={styles.backCircleFloating}>
-          <Text style={styles.backCircleIcon}>←</Text>
+      <View style={[styles.topBar, { paddingTop: insets.top + 16 }]}>
+        <Pressable
+          onPress={handleBackPress}
+          style={({ pressed }) => [styles.backPill, pressed && styles.backPillPressed]}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Previous step">
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-      </SafeAreaView>
+      </View>
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
@@ -753,13 +760,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   topBar: {
-    paddingLeft: 16,
-    paddingRight: 16,
-    paddingBottom: 8,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
   },
   scrollContent: {
     paddingHorizontal: 24,
-    paddingTop: 16,
+    paddingTop: 8,
     paddingBottom: 32,
     gap: 16,
   },
@@ -778,16 +784,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 16,
   },
-  backCircleFloating: {
-    height: 34,
-    width: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
+  backPill: {
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 4,
+    alignSelf: "flex-start",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(0, 0, 0, 0.05)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  backPillPressed: {
+    opacity: 0.72,
+    backgroundColor: "rgba(0, 0, 0, 0.09)",
   },
   title: {
     color: colors.text,
@@ -830,13 +840,6 @@ const styles = StyleSheet.create({
     color: colors.mutedText,
     fontFamily: typography.fontFamily,
     fontSize: 14,
-  },
-  backCircleIcon: {
-    color: colors.text,
-    fontFamily: typography.fontFamily,
-    fontSize: 18,
-    fontWeight: "600",
-    marginTop: -1,
   },
   label: {
     color: colors.text,

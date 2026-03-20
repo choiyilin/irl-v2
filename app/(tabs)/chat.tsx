@@ -5,7 +5,7 @@ import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View }
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/providers/AuthProvider';
 import { colors } from '@/src/theme/colors';
-import { typography } from '@/src/theme/typography';
+import { playfairCaptionBold, typography } from '@/src/theme/typography';
 
 type ChatListItem = {
   matchId: string;
@@ -24,6 +24,16 @@ function getErrorMessage(error: unknown) {
     if (typeof message === 'string') return message;
   }
   return 'Unable to load chats.';
+}
+
+function ChatListSeparator() {
+  return (
+    <View style={styles.separatorWrap}>
+      <View style={styles.separatorHair} />
+      <View style={styles.separatorJewel} />
+      <View style={styles.separatorHair} />
+    </View>
+  );
 }
 
 function formatRelativeTime(isoTime: string | null): string {
@@ -349,10 +359,10 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontFamily: typography.fontFamily,
+    fontFamily: playfairCaptionBold,
     fontSize: 38,
-    fontWeight: '700',
-    lineHeight: 44,
+    fontWeight: '400',
+    lineHeight: 46,
     marginTop: 2,
   },
   segmentedRow: {
@@ -364,8 +374,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   segmentPill: {
-    paddingHorizontal: 18,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderRadius: 11,
   },
   segmentPillActive: {
@@ -375,9 +385,10 @@ const styles = StyleSheet.create({
   },
   segmentText: {
     color: colors.tabInactive,
-    fontFamily: typography.fontFamily,
-    fontSize: 17,
-    fontWeight: '700',
+    fontFamily: playfairCaptionBold,
+    fontSize: 16,
+    fontWeight: '400',
+    letterSpacing: 0.2,
   },
   segmentTextActive: {
     color: colors.text,
@@ -402,13 +413,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   listContent: {
+    paddingBottom: 100,
+  },
+  separatorWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
     gap: 12,
-    paddingBottom: 16,
+    paddingHorizontal: 2,
+  },
+  separatorHair: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  separatorJewel: {
+    width: 6,
+    height: 6,
+    borderRadius: 1,
+    backgroundColor: colors.brandPink,
+    transform: [{ rotate: '45deg' }],
+    opacity: 0.85,
   },
   chatRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    paddingVertical: 4,
   },
   avatar: {
     width: 64,
@@ -425,7 +456,7 @@ const styles = StyleSheet.create({
   avatarFallbackText: {
     color: colors.text,
     fontFamily: typography.fontFamily,
-    fontSize: 22,
+    fontSize: 17,
     fontWeight: '700',
   },
   chatBody: {
@@ -435,15 +466,16 @@ const styles = StyleSheet.create({
   chatName: {
     color: colors.text,
     fontFamily: typography.fontFamily,
-    fontSize: 32,
-    lineHeight: 34,
-    fontWeight: '700',
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   chatPreview: {
     color: colors.mutedText,
     fontFamily: typography.fontFamily,
-    fontSize: 20,
-    lineHeight: 23,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '400',
   },
   chatMeta: {
     alignItems: 'flex-end',
