@@ -1,9 +1,11 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -60,6 +62,32 @@ function formatClaimedDate(iso: string) {
   return `Claimed ${date.toLocaleDateString()}`;
 }
 
+/** `Alert.alert` is unreliable on web; use a synchronous confirm so Back always does something. */
+function confirmLeaveSettings(message: string, onConfirm: () => void | Promise<void>) {
+  const title = "Confirm changes";
+  if (Platform.OS === "web") {
+    if (typeof globalThis !== "undefined" && typeof globalThis.confirm === "function") {
+      if (globalThis.confirm(`${title}\n\n${message}`)) {
+        void Promise.resolve(onConfirm());
+      }
+    }
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: "Keep editing", style: "cancel" },
+    { text: "Go back", onPress: () => void Promise.resolve(onConfirm()) },
+  ]);
+}
+
+function alertPhotosNotSaved() {
+  const msg = "Fix the error above before leaving, or keep editing.";
+  if (Platform.OS === "web") {
+    globalThis.alert?.(`Photos not saved\n\n${msg}`);
+    return;
+  }
+  Alert.alert("Photos not saved", msg);
+}
+
 async function persistPhotoSlot(userId: string, slotIndex: number, storagePath: string) {
   const { error } = await supabase.from("profile_photos").upsert(
     {
@@ -86,6 +114,9 @@ export default function ProfileScreen() {
   const [tickets, setTickets] = useState<PromotionTicket[]>([]);
   const [isLoadingTickets, setIsLoadingTickets] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isPhotoSaving, setIsPhotoSaving] = useState(false);
+  const [photoDraftDirty, setPhotoDraftDirty] = useState(false);
+  const photoSavePromiseRef = useRef<Promise<boolean> | null>(null);
 
   const [settingsFirstName, setSettingsFirstName] = useState("");
   const [settingsLastName, setSettingsLastName] = useState("");
@@ -103,6 +134,10 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (!isSettingsOpen) return;
+    // New edit session; clear any previous "dirty" photo state.
+    setPhotoDraftDirty(false);
+    photoSavePromiseRef.current = null;
+    setIsPhotoSaving(false);
     setSettingsFirstName((metadata.first_name as string) ?? "");
     setSettingsLastName((metadata.last_name as string) ?? "");
     setSettingsGender((metadata.gender as string) ?? "");
@@ -289,6 +324,7 @@ export default function ProfileScreen() {
 
   const openPickerForSlot = async (index: number) => {
     if (!user) return;
+    if (isPhotoSaving) return;
     setErrorMessage("");
     setInfoMessage("");
 
@@ -303,6 +339,7 @@ export default function ProfileScreen() {
     const uri = result.assets?.[0]?.uri;
     if (!uri) return;
 
+    setPhotoDraftDirty(true);
     let optimisticSnapshot: (ProfilePhoto | null)[] = [];
     setPhotos((prev) => {
       optimisticSnapshot = [...prev];
@@ -316,41 +353,80 @@ export default function ProfileScreen() {
       return optimisticSnapshot;
     });
 
-    try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const path = `${user.id}/slot-${index + 1}-${Date.now()}.jpg`;
+    setIsPhotoSaving(true);
+    const savePromise = (async () => {
+      try {
+        const response = await fetch(uri);
+        const blob = await response.blob();
+        const path = `${user.id}/slot-${index + 1}-${Date.now()}.jpg`;
 
-      const { data, error } = await supabase.storage
-        .from("profile-photos")
-        .upload(path, blob, {
-          contentType: blob.type || "image/jpeg",
-          upsert: false,
+        const { data, error } = await supabase.storage
+          .from("profile-photos")
+          .upload(path, blob, {
+            contentType: blob.type || "image/jpeg",
+            upsert: false,
+          });
+        if (error || !data) throw new Error(error?.message ?? "Could not upload photo.");
+
+        let nextSnapshot: (ProfilePhoto | null)[] = [];
+        setPhotos((prev) => {
+          nextSnapshot = [...prev];
+          nextSnapshot[index] = {
+            id: prev[index]?.id ?? "",
+            slot_index: index + 1,
+            storage_path: data.path,
+            // Keep local URI so the preview remains stable immediately after upload.
+            displayUrl: uri,
+          };
+          return nextSnapshot;
         });
-      if (error || !data) throw new Error(error?.message ?? "Could not upload photo.");
 
-      let nextSnapshot: (ProfilePhoto | null)[] = [];
-      setPhotos((prev) => {
-        nextSnapshot = [...prev];
-        nextSnapshot[index] = {
-          id: prev[index]?.id ?? "",
-          slot_index: index + 1,
-          storage_path: data.path,
-          // Keep local URI so the preview remains stable immediately after upload.
-          displayUrl: uri,
-        };
-        return nextSnapshot;
-      });
+        await persistPhotoSlot(user.id, index + 1, data.path);
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: { has_uploaded_photos: nextSnapshot.some((p) => p !== null) },
+        });
+        if (metaError) throw new Error(metaError.message);
+        setInfoMessage("Photo updated.");
+        return true;
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : "Could not update photo.");
+        return false;
+      }
+    })();
 
-      await persistPhotoSlot(user.id, index + 1, data.path);
-      const { error: metaError } = await supabase.auth.updateUser({
-        data: { has_uploaded_photos: nextSnapshot.some((p) => p !== null) },
-      });
-      if (metaError) throw new Error(metaError.message);
-      setInfoMessage("Photo updated.");
-    } catch (e) {
-      setErrorMessage(e instanceof Error ? e.message : "Could not update photo.");
+    photoSavePromiseRef.current = savePromise;
+    const ok = await savePromise;
+    photoSavePromiseRef.current = null;
+    setIsPhotoSaving(false);
+    return ok;
+  };
+
+  const finalizeCloseSettings = async () => {
+    const p = photoSavePromiseRef.current;
+    const ok = p ? await p : true;
+    if (!ok) {
+      alertPhotosNotSaved();
+      return;
     }
+    setIsSettingsOpen(false);
+    setPhotoDraftDirty(false);
+    setErrorMessage("");
+    setInfoMessage("");
+  };
+
+  const handleCloseSettings = () => {
+    if (!photoDraftDirty && !isPhotoSaving) {
+      setIsSettingsOpen(false);
+      setErrorMessage("");
+      setInfoMessage("");
+      return;
+    }
+
+    const message = isPhotoSaving
+      ? "Photos are still saving. Do you want to go back?"
+      : "Do you want to go back? Your photo changes will be kept.";
+
+    confirmLeaveSettings(message, finalizeCloseSettings);
   };
 
   return (
@@ -360,7 +436,8 @@ export default function ProfileScreen() {
         styles.container,
         { paddingBottom: Math.max(insets.bottom, 20) + 56 },
       ]}
-      keyboardShouldPersistTaps="handled"
+      keyboardShouldPersistTaps={isSettingsOpen ? "always" : "handled"}
+      stickyHeaderIndices={isSettingsOpen ? [1] : undefined}
     >
       <View style={[styles.headerRow, { paddingTop: insets.top ? insets.top : 0 }]}>
         <View style={styles.headerLeft}>
@@ -404,18 +481,14 @@ export default function ProfileScreen() {
 
       {isSettingsOpen ? (
         <>
-          <View style={styles.settingsTopBar}>
+          <View style={styles.settingsTopBar} collapsable={false}>
             <Pressable
               style={({ pressed }) => [
                 styles.previousButton,
                 pressed && styles.previousButtonPressed,
               ]}
-              onPress={() => {
-                setIsSettingsOpen(false);
-                setErrorMessage("");
-                setInfoMessage("");
-              }}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+              onPress={handleCloseSettings}
+              hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
               accessibilityRole="button"
               accessibilityLabel="Back to profile"
             >
@@ -457,6 +530,7 @@ export default function ProfileScreen() {
                   <Pressable
                     key={slot}
                     style={styles.photoSlot}
+                    disabled={isPhotoSaving}
                     onPress={() => openPickerForSlot(index)}
                     accessibilityRole="button"
                     accessibilityLabel={`Edit photo ${slot}`}
@@ -672,6 +746,9 @@ const styles = StyleSheet.create({
   settingsTopBar: {
     marginTop: 4,
     marginBottom: 14,
+    zIndex: 2,
+    elevation: 4,
+    backgroundColor: colors.background,
   },
   previousButton: {
     alignItems: "center",

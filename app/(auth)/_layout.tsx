@@ -1,15 +1,14 @@
 import { Redirect, Stack, useSegments } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 
-import { hasFinishedAppOnboarding } from '@/src/lib/authRouting';
 import { useAuth } from '@/src/providers/AuthProvider';
 import { colors } from '@/src/theme/colors';
 
 export default function AuthLayout() {
-  const { isLoading, session } = useAuth();
+  const { isAuthReady, session, canEnterMainApp } = useAuth();
   const segments = useSegments();
 
-  if (isLoading) {
+  if (!isAuthReady) {
     return (
       <View
         style={{
@@ -24,7 +23,7 @@ export default function AuthLayout() {
   }
 
   if (session) {
-    if (hasFinishedAppOnboarding(session.user)) {
+    if (canEnterMainApp) {
       return <Redirect href="/" />;
     }
 

@@ -2,12 +2,17 @@ import { Session, User } from '@supabase/supabase-js';
 import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useState } from 'react';
 
 import { env } from '@/src/config/env';
+import { fetchLegacyOnboardingSignals, hasFinishedAppOnboarding } from '@/src/lib/authRouting';
 import { supabase } from '@/src/lib/supabase';
 
 type AuthContextValue = {
   session: Session | null;
   user: User | null;
   isLoading: boolean;
+  /** False while resolving whether a signed-in user may enter the main app (includes legacy DB check). */
+  isAuthReady: boolean;
+  /** Signed-in user may use tabs (metadata complete or legacy profile/photos in DB). */
+  canEnterMainApp: boolean;
   isConfigured: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
@@ -37,6 +42,14 @@ async function ensureProfileExists(user: User) {
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  /** null = not needed (signed out or metadata already complete) or still fetching */
+  const [legacyOnboardingOk, setLegacyOnboardingOk] = useState<boolean | null>(null);
+
+  const user = session?.user ?? null;
+  const metadataOnboardingDone = user ? hasFinishedAppOnboarding(user) : false;
+  const onboardingCheckPending = Boolean(user && !metadataOnboardingDone && legacyOnboardingOk === null);
+  const isAuthReady = !isLoading && !onboardingCheckPending;
+  const canEnterMainApp = Boolean(session && (metadataOnboardingDone || legacyOnboardingOk === true));
 
   useEffect(() => {
     let isMounted = true;
@@ -73,11 +86,49 @@ export function AuthProvider({ children }: PropsWithChildren) {
     };
   }, []);
 
+  const metadataGateKey = user
+    ? `${user.user_metadata?.has_completed_signup_profile}-${user.user_metadata?.has_uploaded_photos}`
+    : '';
+
+  useEffect(() => {
+    if (!user?.id) {
+      setLegacyOnboardingOk(null);
+      return;
+    }
+    if (hasFinishedAppOnboarding(user)) {
+      setLegacyOnboardingOk(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLegacyOnboardingOk(null);
+
+    (async () => {
+      const signals = await fetchLegacyOnboardingSignals(user.id);
+      if (cancelled) return;
+      setLegacyOnboardingOk(signals.canEnterMainApp);
+      if (signals.hasProfilePhotos) {
+        const { error } = await supabase.auth.updateUser({
+          data: { has_uploaded_photos: true },
+        });
+        if (error) {
+          console.warn('Could not backfill has_uploaded_photos:', error.message);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, metadataGateKey]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
       user: session?.user ?? null,
       isLoading,
+      isAuthReady,
+      canEnterMainApp,
       isConfigured: env.isSupabaseConfigured,
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -98,7 +149,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
       },
     }),
-    [isLoading, session],
+    [canEnterMainApp, isAuthReady, isLoading, session],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

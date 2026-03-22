@@ -1,9 +1,10 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   Image,
   Pressable,
   ScrollView,
@@ -108,7 +109,7 @@ const INTERESTED_IN_OPTIONS = [
 ] as const;
 
 export default function SignUpScreen() {
-  const { signIn, isConfigured, session } = useAuth();
+  const { signIn, signOut, isConfigured, session } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState<Step>("name");
@@ -319,7 +320,17 @@ export default function SignUpScreen() {
     }
   };
 
-  const goBack = () => {
+  /** Sign out if needed so auth layout allows sign-in (switch away from this account). */
+  const exitToSignIn = useCallback(async () => {
+    setErrorMessage("");
+    setInfoMessage("");
+    if (session) {
+      await signOut().catch(() => undefined);
+    }
+    router.replace("/(auth)/sign-in");
+  }, [router, session, signOut]);
+
+  const goBack = useCallback(() => {
     setErrorMessage("");
     setStep((prev) => {
       if (prev === "dob") return "name";
@@ -327,7 +338,9 @@ export default function SignUpScreen() {
       if (prev === "password") return "email";
       if (prev === "verifyEmail") return "password";
       if (prev === "gender") {
-        return genderEntrySource === "instant" ? "password" : "verifyEmail";
+        if (genderEntrySource === "instant") return "password";
+        if (genderEntrySource === "verified") return "verifyEmail";
+        return "name";
       }
       if (prev === "sexualOrientation") return "gender";
       if (prev === "interestedIn") return "sexualOrientation";
@@ -335,15 +348,27 @@ export default function SignUpScreen() {
       if (prev === "profilePhotos6") return "profilePicture";
       return prev;
     });
-  };
+  }, [genderEntrySource]);
 
   const handleBackPress = () => {
     if (step === "name") {
-      router.back();
+      void exitToSignIn();
       return;
     }
     goBack();
   };
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (step === "name") {
+        void exitToSignIn();
+        return true;
+      }
+      goBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [exitToSignIn, goBack, step]);
 
   const isContinueDisabled =
     isSubmitting ||
@@ -469,7 +494,7 @@ export default function SignUpScreen() {
           style={({ pressed }) => [styles.backPill, pressed && styles.backPillPressed]}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel="Previous step">
+          accessibilityLabel={step === "name" ? "Back to sign in" : "Previous step"}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
       </View>
@@ -496,23 +521,31 @@ export default function SignUpScreen() {
       </View>
 
       {step === "name" ? (
-        <View style={styles.nameRow}>
-          <TextInput
-            autoCapitalize="words"
-            placeholder="First name"
-            placeholderTextColor={colors.mutedText}
-            style={[styles.input, styles.nameInput]}
-            value={firstName}
-            onChangeText={setFirstName}
-          />
-          <TextInput
-            autoCapitalize="words"
-            placeholder="Last name"
-            placeholderTextColor={colors.mutedText}
-            style={[styles.input, styles.nameInput]}
-            value={lastName}
-            onChangeText={setLastName}
-          />
+        <View style={{ gap: 12 }}>
+          <View style={styles.nameRow}>
+            <TextInput
+              autoCapitalize="words"
+              placeholder="First name"
+              placeholderTextColor={colors.mutedText}
+              style={[styles.input, styles.nameInput]}
+              value={firstName}
+              onChangeText={setFirstName}
+            />
+            <TextInput
+              autoCapitalize="words"
+              placeholder="Last name"
+              placeholderTextColor={colors.mutedText}
+              style={[styles.input, styles.nameInput]}
+              value={lastName}
+              onChangeText={setLastName}
+            />
+          </View>
+          {session ? (
+            <Text style={styles.accountHint}>
+              Signed in as someone who still needs to finish setup—or the wrong account? You can go
+              back to sign in.
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -586,6 +619,9 @@ export default function SignUpScreen() {
           ) : null}
           <Pressable onPress={resendVerificationEmail} style={styles.resendButton}>
             <Text style={styles.resendButtonText}>Resend email</Text>
+          </Pressable>
+          <Pressable onPress={() => void exitToSignIn()} style={styles.switchAccountButton}>
+            <Text style={styles.switchAccountText}>Wrong account? Sign in with a different one</Text>
           </Pressable>
         </View>
       ) : null}
@@ -747,6 +783,13 @@ export default function SignUpScreen() {
               {step === "profilePhotos6" ? "Finish" : "Continue"}
             </Text>
           )}
+        </Pressable>
+      ) : null}
+      {step === "name" ? (
+        <Pressable onPress={() => void exitToSignIn()}>
+          <Text style={styles.signInLink}>
+            {session ? "Use a different account — Sign in" : "Already have an account? Sign in"}
+          </Text>
         </Pressable>
       ) : null}
       </ScrollView>
@@ -965,6 +1008,32 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily,
     fontSize: 14,
     textDecorationLine: "underline",
+  },
+  switchAccountButton: {
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    marginTop: 4,
+  },
+  switchAccountText: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 14,
+    textDecorationLine: "underline",
+  },
+  accountHint: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  signInLink: {
+    color: colors.text,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    textAlign: "center",
+    textDecorationLine: "underline",
+    marginTop: 4,
   },
   profilePictureCard: {
     borderRadius: 18,
