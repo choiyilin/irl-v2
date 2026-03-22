@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { getImageUploadPayload } from "@/src/lib/getImageUploadPayload";
 import { supabase } from "@/src/lib/supabase";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { colors } from "@/src/theme/colors";
@@ -205,28 +206,24 @@ export default function ProfileScreen() {
       }>;
 
       try {
-        // Create signed URLs in parallel to avoid a long "empty tiles" period.
-        const signedResults = await Promise.all(
-          rows.map(async (row) => {
-            const { data: signed, error: signedError } = await supabase.storage
-              .from("profile-photos")
-              .createSignedUrl(row.storage_path, 60 * 60);
+        const storagePaths = rows.map((r) => r.storage_path);
+        const { data: signedList, error: signedListError } = await supabase.storage
+          .from("profile-photos")
+          .createSignedUrls(storagePaths, 60 * 60);
 
-            if (signedError || !signed) return null;
-            return { row, signedUrl: signed.signedUrl };
-          }),
-        );
-
-        for (const item of signedResults) {
-          if (!item) continue;
-          const { row, signedUrl } = item;
-          next[row.slot_index - 1] = {
-            id: row.id,
-            slot_index: row.slot_index,
-            storage_path: row.storage_path,
-            displayUrl: signedUrl,
-          };
-        };
+        if (!signedListError && signedList) {
+          for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const signed = signedList[i];
+            if (!signed?.signedUrl || signed.error) continue;
+            next[row.slot_index - 1] = {
+              id: row.id,
+              slot_index: row.slot_index,
+              storage_path: row.storage_path,
+              displayUrl: signed.signedUrl,
+            };
+          }
+        }
 
         if (!isCancelled) setPhotos(next);
       } catch (e) {
@@ -354,39 +351,45 @@ export default function ProfileScreen() {
     });
 
     setIsPhotoSaving(true);
-    const savePromise = (async () => {
+    const savePromise = (async (): Promise<boolean> => {
+      let nextSnapshot: (ProfilePhoto | null)[] = [];
       try {
-        const response = await fetch(uri);
-        const blob = await response.blob();
+        const { body, contentType } = await getImageUploadPayload(uri);
         const path = `${user.id}/slot-${index + 1}-${Date.now()}.jpg`;
 
         const { data, error } = await supabase.storage
           .from("profile-photos")
-          .upload(path, blob, {
-            contentType: blob.type || "image/jpeg",
+          .upload(path, body, {
+            contentType,
             upsert: false,
           });
         if (error || !data) throw new Error(error?.message ?? "Could not upload photo.");
 
-        let nextSnapshot: (ProfilePhoto | null)[] = [];
         setPhotos((prev) => {
           nextSnapshot = [...prev];
           nextSnapshot[index] = {
             id: prev[index]?.id ?? "",
             slot_index: index + 1,
             storage_path: data.path,
-            // Keep local URI so the preview remains stable immediately after upload.
             displayUrl: uri,
           };
           return nextSnapshot;
         });
 
         await persistPhotoSlot(user.id, index + 1, data.path);
-        const { error: metaError } = await supabase.auth.updateUser({
-          data: { has_uploaded_photos: nextSnapshot.some((p) => p !== null) },
-        });
-        if (metaError) throw new Error(metaError.message);
+        setPhotoDraftDirty(false);
         setInfoMessage("Photo updated.");
+
+        void supabase.auth
+          .updateUser({
+            data: { has_uploaded_photos: nextSnapshot.some((p) => p !== null) },
+          })
+          .then(({ error: metaError }) => {
+            if (metaError) {
+              console.warn("Could not sync has_uploaded_photos:", metaError.message);
+            }
+          });
+
         return true;
       } catch (e) {
         setErrorMessage(e instanceof Error ? e.message : "Could not update photo.");
@@ -395,10 +398,12 @@ export default function ProfileScreen() {
     })();
 
     photoSavePromiseRef.current = savePromise;
-    const ok = await savePromise;
-    photoSavePromiseRef.current = null;
-    setIsPhotoSaving(false);
-    return ok;
+    try {
+      return await savePromise;
+    } finally {
+      photoSavePromiseRef.current = null;
+      setIsPhotoSaving(false);
+    }
   };
 
   const finalizeCloseSettings = async () => {
@@ -480,7 +485,7 @@ export default function ProfileScreen() {
       </View>
 
       {isSettingsOpen ? (
-        <>
+        <View collapsable={false}>
           <View style={styles.settingsTopBar} collapsable={false}>
             <Pressable
               style={({ pressed }) => [
@@ -652,7 +657,7 @@ export default function ProfileScreen() {
           <Text style={[styles.logout, styles.logoutInSettings]} onPress={() => signOut()}>
             Sign out
           </Text>
-        </>
+        </View>
       ) : (
         <>
           <View style={styles.card}>

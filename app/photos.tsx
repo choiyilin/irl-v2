@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 
+import { getImageUploadPayload } from "@/src/lib/getImageUploadPayload";
 import { supabase } from "@/src/lib/supabase";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { colors } from "@/src/theme/colors";
@@ -33,16 +34,15 @@ async function uploadPhotoToSupabase(
   userId: string,
   slotIndex: number,
 ) {
-  const response = await fetch(uri);
-  const blob = await response.blob();
+  const { body, contentType } = await getImageUploadPayload(uri);
 
   const fileExt = "jpg";
   const path = `${userId}/slot-${slotIndex + 1}-${Date.now()}.${fileExt}`;
 
   const { data, error } = await supabase.storage
     .from(STORAGE_BUCKET)
-    .upload(path, blob, {
-      contentType: blob.type || "image/jpeg",
+    .upload(path, body, {
+      contentType,
       upsert: false,
     });
 

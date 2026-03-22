@@ -16,8 +16,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Linking from "expo-linking";
 
-import { useAuth } from "@/src/providers/AuthProvider";
+import { getImageUploadPayload } from "@/src/lib/getImageUploadPayload";
 import { supabase } from "@/src/lib/supabase";
+import { useAuth } from "@/src/providers/AuthProvider";
 import { colors } from "@/src/theme/colors";
 import { typography } from "@/src/theme/typography";
 
@@ -38,12 +39,11 @@ const PHOTO_SLOTS = [1, 2, 3, 4, 5, 6] as const;
 const STORAGE_BUCKET = "profile-photos";
 
 async function uploadPhotoToSupabase(uri: string, userId: string, slotIndex: number) {
-  const response = await fetch(uri);
-  const blob = await response.blob();
+  const { body, contentType } = await getImageUploadPayload(uri);
   const fileExt = "jpg";
   const path = `${userId}/slot-${slotIndex + 1}-${Date.now()}.${fileExt}`;
-  const { data, error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, blob, {
-    contentType: blob.type || "image/jpeg",
+  const { data, error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, body, {
+    contentType,
     upsert: false,
   });
   if (error) throw new Error(error.message);
