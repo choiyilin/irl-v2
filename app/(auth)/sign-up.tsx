@@ -31,7 +31,7 @@ type Step =
   | "gender"
   | "sexualOrientation"
   | "interestedIn"
-  | "profilePicture"
+  | "profilePicture" // legacy alias; render unified grid
   | "profilePhotos6";
 
 const PHOTO_SLOT_COUNT = 6;
@@ -48,6 +48,20 @@ async function uploadPhotoToSupabase(uri: string, userId: string, slotIndex: num
   });
   if (error) throw new Error(error.message);
   return data.path;
+}
+
+async function persistPhotoSlot(userId: string, slotIndex: number, storagePath: string) {
+  const { error } = await supabase
+    .from("profile_photos")
+    .upsert(
+      {
+        user_id: userId,
+        slot_index: slotIndex,
+        storage_path: storagePath,
+      },
+      { onConflict: "user_id,slot_index" },
+    );
+  if (error) throw new Error(error.message);
 }
 
 function normalizeEmail(value: string) {
@@ -92,13 +106,7 @@ const GENDER_OPTIONS = [
 const ORIENTATION_OPTIONS = [
   "Straight",
   "Gay",
-  "Lesbian",
   "Bisexual",
-  "Pansexual",
-  "Asexual",
-  "Queer",
-  "Questioning",
-  "Prefer not to say",
 ] as const;
 
 const INTERESTED_IN_OPTIONS = [
@@ -112,13 +120,11 @@ export default function SignUpScreen() {
   const { signIn, signOut, isConfigured, session } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [step, setStep] = useState<Step>("name");
+  const [step, setStep] = useState<Step>("email");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [dateOfBirthInput, setDateOfBirthInput] = useState("");
-  /** How we reached post-signup steps (for correct back from Gender). */
-  const [genderEntrySource, setGenderEntrySource] = useState<"instant" | "verified" | null>(null);
   const [gender, setGender] = useState("");
   const [sexualOrientation, setSexualOrientation] = useState("");
   const [interestedInSelections, setInterestedInSelections] = useState<string[]>([]);
@@ -131,6 +137,9 @@ export default function SignUpScreen() {
   const [signupPhotoUris, setSignupPhotoUris] = useState<(string | null)[]>(() =>
     Array.from({ length: PHOTO_SLOT_COUNT }, () => null),
   );
+  const [isResuming, setIsResuming] = useState(false);
+  const [hasHydratedResume, setHasHydratedResume] = useState(false);
+  const [isPhotoSaving, setIsPhotoSaving] = useState(false);
 
   const calculateAge = (birthDate: Date) => {
     const today = new Date();
@@ -170,23 +179,6 @@ export default function SignUpScreen() {
     setErrorMessage("");
     setInfoMessage("");
 
-    if (step === "name") {
-      if (!firstName.trim()) return setErrorMessage("Please enter your first name.");
-      if (!lastName.trim()) return setErrorMessage("Please enter your last name.");
-      setStep("dob");
-      return;
-    }
-
-    if (step === "dob") {
-      const parsed = parseDob(dateOfBirthInput);
-      if (!parsed) return setErrorMessage("Please enter your date of birth (MM/DD/YYYY).");
-      if (calculateAge(parsed) < 18) {
-        return setErrorMessage("You must be at least 18 years old to sign up.");
-      }
-      setStep("email");
-      return;
-    }
-
     if (step === "email") {
       if (!normalizedEmail) return setErrorMessage("Please enter your email.");
       setEmail(normalizedEmail);
@@ -195,6 +187,13 @@ export default function SignUpScreen() {
     }
 
     if (step === "password") {
+      // If we already have an active session (e.g. user navigated back),
+      // skip re-signing up and continue the onboarding wizard.
+      if (session) {
+        setStep("name");
+        return;
+      }
+
       if (!password.trim() || password.length < 6) {
         return setErrorMessage("Password must be at least 6 characters.");
       }
@@ -212,9 +211,7 @@ export default function SignUpScreen() {
         if (error) throw error;
 
         if (data.session) {
-          setInfoMessage("Email verification is not required. Continuing…");
-          setGenderEntrySource("instant");
-          setStep("gender");
+          setStep("name");
           return;
         }
 
@@ -228,12 +225,79 @@ export default function SignUpScreen() {
       return;
     }
 
+    if (!session) {
+      setErrorMessage("Please sign in again to continue your signup.");
+      return;
+    }
+
+    if (step === "name") {
+      if (!firstName.trim()) return setErrorMessage("Please enter your first name.");
+      if (!lastName.trim()) return setErrorMessage("Please enter your last name.");
+
+      setIsSubmitting(true);
+      try {
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: {
+            first_name: firstName.trim(),
+            last_name: lastName.trim(),
+          },
+        });
+        if (metaError) throw new Error(metaError.message);
+
+        setStep("dob");
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : "Unable to save your name.");
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    if (step === "dob") {
+      const parsed = parseDob(dateOfBirthInput);
+      if (!parsed) return setErrorMessage("Please enter your date of birth (MM/DD/YYYY).");
+      if (calculateAge(parsed) < 18) {
+        return setErrorMessage("You must be at least 18 years old to sign up.");
+      }
+
+      setIsSubmitting(true);
+      try {
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: {
+            date_of_birth: formatDobInput(dateOfBirthInput),
+          },
+        });
+        if (metaError) throw new Error(metaError.message);
+
+        setStep("gender");
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : "Unable to save your birth date.");
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     if (step === "gender") {
       if (!gender.trim()) {
         setErrorMessage("Please select your gender.");
         return;
       }
-      setStep("sexualOrientation");
+      setIsSubmitting(true);
+      try {
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: {
+            gender: gender.trim(),
+          },
+        });
+        if (metaError) throw new Error(metaError.message);
+
+        setStep("sexualOrientation");
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : "Unable to save your gender.");
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -242,7 +306,23 @@ export default function SignUpScreen() {
         setErrorMessage("Please select your sexual orientation.");
         return;
       }
-      setStep("interestedIn");
+      setIsSubmitting(true);
+      try {
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: {
+            sexual_orientation: sexualOrientation.trim(),
+          },
+        });
+        if (metaError) throw new Error(metaError.message);
+
+        setStep("interestedIn");
+      } catch (e) {
+        setErrorMessage(
+          e instanceof Error ? e.message : "Unable to save your sexual orientation.",
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -251,57 +331,42 @@ export default function SignUpScreen() {
         setErrorMessage("Please select who you’re interested in seeing.");
         return;
       }
-      if (!session) {
-        setErrorMessage("Please verify your email first.");
-        return;
+
+      setIsSubmitting(true);
+      try {
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: {
+            interested_in_seeing: interestedInSelections.join(", "),
+            signup_step: "profilePhotos6",
+          },
+        });
+        if (metaError) throw new Error(metaError.message);
+
+        setStep("profilePhotos6");
+      } catch (e) {
+        setErrorMessage(
+          e instanceof Error ? e.message : "Unable to save your preferences.",
+        );
+      } finally {
+        setIsSubmitting(false);
       }
-      setStep("profilePicture");
       return;
     }
 
-    if (step === "profilePicture") {
-      if (!signupPhotoUris[0]) {
-        setErrorMessage("Please choose a profile picture.");
-        return;
-      }
-      setStep("profilePhotos6");
-      return;
-    }
-
-    // profilePhotos6 — upload photos + save profile metadata, then go to app
+    // profilePhotos6 — mark onboarding complete (photos are persisted per-slot)
     const filledCount = signupPhotoUris.filter((u) => u !== null).length;
     if (filledCount < PHOTO_SLOT_COUNT) {
       setErrorMessage("Please add a photo for all six slots.");
       return;
     }
-    if (!session?.user?.id) {
-      setErrorMessage("Please verify your email first.");
-      return;
-    }
 
     setIsSubmitting(true);
     try {
-      const userId = session.user.id;
-      const paths: string[] = [];
-      for (let i = 0; i < signupPhotoUris.length; i++) {
-        const uri = signupPhotoUris[i];
-        if (!uri) continue;
-        paths.push(await uploadPhotoToSupabase(uri, userId, i));
-      }
-
-      const records = paths.map((path, index) => ({
-        user_id: userId,
-        slot_index: index + 1,
-        storage_path: path,
-      }));
-
-      const { error: insertError } = await supabase.from("profile_photos").insert(records);
-      if (insertError) throw new Error(insertError.message);
-
       const { error: metaError } = await supabase.auth.updateUser({
         data: {
           has_completed_signup_profile: true,
           has_uploaded_photos: true,
+          signup_step: "complete",
           first_name: firstName.trim(),
           last_name: lastName.trim(),
           date_of_birth: formatDobInput(dateOfBirthInput),
@@ -334,24 +399,19 @@ export default function SignUpScreen() {
     setErrorMessage("");
     setStep((prev) => {
       if (prev === "dob") return "name";
-      if (prev === "email") return "dob";
+      if (prev === "name") return "password";
       if (prev === "password") return "email";
       if (prev === "verifyEmail") return "password";
-      if (prev === "gender") {
-        if (genderEntrySource === "instant") return "password";
-        if (genderEntrySource === "verified") return "verifyEmail";
-        return "name";
-      }
+      if (prev === "gender") return "dob";
       if (prev === "sexualOrientation") return "gender";
       if (prev === "interestedIn") return "sexualOrientation";
-      if (prev === "profilePicture") return "interestedIn";
-      if (prev === "profilePhotos6") return "profilePicture";
+      if (prev === "profilePhotos6") return "interestedIn";
       return prev;
     });
-  }, [genderEntrySource]);
+  }, []);
 
   const handleBackPress = () => {
-    if (step === "name") {
+    if (step === "email") {
       void exitToSignIn();
       return;
     }
@@ -360,7 +420,7 @@ export default function SignUpScreen() {
 
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (step === "name") {
+      if (step === "email") {
         void exitToSignIn();
         return true;
       }
@@ -372,6 +432,7 @@ export default function SignUpScreen() {
 
   const isContinueDisabled =
     isSubmitting ||
+    isPhotoSaving ||
     (step === "name" && (!firstName.trim() || !lastName.trim())) ||
     (step === "dob" && (!dobIsComplete || !parsedDob || !isAdult)) ||
     (step === "email" && !normalizedEmail) ||
@@ -379,8 +440,7 @@ export default function SignUpScreen() {
     (step === "gender" && !gender.trim()) ||
     (step === "sexualOrientation" && !sexualOrientation.trim()) ||
     (step === "interestedIn" && interestedInSelections.length === 0) ||
-    (step === "profilePicture" && !signupPhotoUris[0]) ||
-    (step === "profilePhotos6" &&
+    ((step === "profilePicture" || step === "profilePhotos6") &&
       signupPhotoUris.filter((u) => u !== null).length < PHOTO_SLOT_COUNT);
 
   useEffect(() => {
@@ -395,8 +455,7 @@ export default function SignUpScreen() {
         try {
           await signIn(normalizedEmail, password);
           if (isCancelled) return;
-          setGenderEntrySource("verified");
-          setStep("gender");
+          setStep("name");
         } catch {
           // Still not verified / cannot sign in yet
         }
@@ -417,6 +476,109 @@ export default function SignUpScreen() {
   }, [normalizedEmail, password, signIn, step]);
 
   useEffect(() => {
+    if (!session?.user?.id) return;
+    if (hasHydratedResume) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      setIsResuming(true);
+      try {
+        const userId = session.user.id;
+        const metadata = session.user.user_metadata ?? {};
+
+        const first = typeof metadata.first_name === "string" ? metadata.first_name : "";
+        const last = typeof metadata.last_name === "string" ? metadata.last_name : "";
+        const dob = typeof metadata.date_of_birth === "string" ? metadata.date_of_birth : "";
+        const g = typeof metadata.gender === "string" ? metadata.gender : "";
+        const so = typeof metadata.sexual_orientation === "string" ? metadata.sexual_orientation : "";
+        const interestedRaw =
+          typeof metadata.interested_in_seeing === "string" ? metadata.interested_in_seeing : "";
+
+        setFirstName(first);
+        setLastName(last);
+        setDateOfBirthInput(dob);
+        setGender(g);
+        const soAllowed = ORIENTATION_OPTIONS.some((o) => o === so);
+        setSexualOrientation(soAllowed ? so : "");
+
+        const interestedParsed = interestedRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        if (interestedParsed.includes("Everyone")) {
+          setInterestedInSelections(["Everyone"]);
+        } else {
+          setInterestedInSelections(interestedParsed);
+        }
+
+        const { data: photoRows } = await supabase
+          .from("profile_photos")
+          .select("slot_index, storage_path")
+          .eq("user_id", userId)
+          .order("slot_index", { ascending: true });
+
+        const rows = photoRows ?? [];
+        const nextUris: (string | null)[] = Array.from(
+          { length: PHOTO_SLOT_COUNT },
+          () => null,
+        );
+
+        const storagePaths = rows
+          .map((r) => r.storage_path)
+          .filter((p): p is string => typeof p === "string");
+
+        if (storagePaths.length > 0) {
+          const { data: signedList, error: signedErr } = await supabase.storage
+            .from(STORAGE_BUCKET)
+            .createSignedUrls(storagePaths, 60 * 60);
+
+          if (!signedErr && signedList) {
+            for (let i = 0; i < rows.length; i++) {
+              const row = rows[i];
+              const signed = signedList[i];
+              if (!signed?.signedUrl || signed.error) continue;
+              nextUris[row.slot_index - 1] = signed.signedUrl;
+            }
+          }
+        }
+
+        if (cancelled) return;
+
+        setSignupPhotoUris(nextUris);
+
+        if (!first || !last) {
+          setStep("name");
+        } else if (!dob) {
+          setStep("dob");
+        } else if (!g) {
+          setStep("gender");
+        } else if (!so) {
+          setStep("sexualOrientation");
+        } else if (interestedParsed.length === 0) {
+          setStep("interestedIn");
+        } else {
+          setStep("profilePhotos6");
+        }
+      } catch {
+        // If resume hydration fails, keep whatever step the UI is currently on.
+      } finally {
+        if (!cancelled) {
+          setIsResuming(false);
+          setHasHydratedResume(true);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, hasHydratedResume]);
+
+  useEffect(() => {
     if (step !== "profilePicture" && step !== "profilePhotos6") return;
     (async () => {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -427,6 +589,7 @@ export default function SignUpScreen() {
   }, [step]);
 
   const openPickerForSlot = async (slotIndex: number) => {
+    if (isPhotoSaving) return;
     setErrorMessage("");
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
@@ -436,11 +599,33 @@ export default function SignUpScreen() {
     if (result.canceled) return;
     const uri = result.assets?.[0]?.uri;
     if (!uri) return;
+
+    if (!session?.user?.id) {
+      setErrorMessage("Please sign in again to save your photos.");
+      return;
+    }
+
     setSignupPhotoUris((prev) => {
       const next = [...prev];
       next[slotIndex] = uri;
       return next;
     });
+
+    setIsPhotoSaving(true);
+    try {
+      const userId = session.user.id;
+      const storagePath = await uploadPhotoToSupabase(uri, userId, slotIndex);
+      await persistPhotoSlot(userId, slotIndex + 1, storagePath);
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : "Could not save this photo.");
+      setSignupPhotoUris((prev) => {
+        const next = [...prev];
+        next[slotIndex] = null;
+        return next;
+      });
+    } finally {
+      setIsPhotoSaving(false);
+    }
   };
 
   const resendVerificationEmail = async () => {
@@ -463,28 +648,22 @@ export default function SignUpScreen() {
     }
   };
 
-  const stepLabel =
-    step === "name"
-      ? "Name"
-      : step === "dob"
-        ? "Birth date"
-        : step === "email"
-          ? "Email"
-          : step === "password"
-            ? "Password"
-            : step === "verifyEmail"
-              ? "Verify email"
-              : step === "gender"
-                ? "Gender"
-                : step === "sexualOrientation"
-                  ? "Sexual orientation"
-                  : step === "interestedIn"
-                    ? "Interested in seeing"
-                    : step === "profilePicture"
-                      ? "Profile picture"
-                      : "Profile photos";
-
   const isPhotoStep = step === "profilePicture" || step === "profilePhotos6";
+
+  if (isResuming) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.background,
+        }}
+      >
+        <ActivityIndicator color={colors.text} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screenRoot}>
@@ -494,7 +673,7 @@ export default function SignUpScreen() {
           style={({ pressed }) => [styles.backPill, pressed && styles.backPillPressed]}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel={step === "name" ? "Back to sign in" : "Previous step"}>
+          accessibilityLabel={step === "email" ? "Back to sign in" : "Previous step"}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
       </View>
@@ -516,10 +695,6 @@ export default function SignUpScreen() {
         </Text>
       ) : null}
 
-      <View style={styles.stepHeaderRow}>
-        <Text style={styles.stepText}>{stepLabel}</Text>
-      </View>
-
       {step === "name" ? (
         <View style={{ gap: 12 }}>
           <View style={styles.nameRow}>
@@ -540,12 +715,6 @@ export default function SignUpScreen() {
               onChangeText={setLastName}
             />
           </View>
-          {session ? (
-            <Text style={styles.accountHint}>
-              Signed in as someone who still needs to finish setup—or the wrong account? You can go
-              back to sign in.
-            </Text>
-          ) : null}
         </View>
       ) : null}
 
@@ -707,34 +876,11 @@ export default function SignUpScreen() {
         </View>
       ) : null}
 
-      {step === "profilePicture" ? (
+      {step === "profilePicture" || step === "profilePhotos6" ? (
         <View style={{ gap: 12 }}>
-          <Text style={styles.label}>Choose your profile picture</Text>
+          <Text style={styles.label}>Upload six photos</Text>
           <Text style={styles.hint}>
-            This is the main photo people see first. You can change it later.
-          </Text>
-          <Pressable
-            style={[styles.profilePictureCard, !!signupPhotoUris[0] && styles.photoSlotSelected]}
-            onPress={() => openPickerForSlot(0)}
-          >
-            {signupPhotoUris[0] ? (
-              <Image source={{ uri: signupPhotoUris[0] }} style={styles.profilePictureImage} />
-            ) : (
-              <View style={styles.profilePicturePlaceholder}>
-                <Text style={styles.photoPlaceholderIcon}>＋</Text>
-                <Text style={styles.profilePicturePlaceholderText}>Tap to choose a photo</Text>
-              </View>
-            )}
-          </Pressable>
-        </View>
-      ) : null}
-
-      {step === "profilePhotos6" ? (
-        <View style={{ gap: 12 }}>
-          <Text style={styles.label}>Add six photos for your profile</Text>
-          <Text style={styles.hint}>
-            Your profile picture is already selected above. Choose the remaining photos to fill
-            all six slots.
+            Add all six photos here. The top-left photo is your profile picture.
           </Text>
           <View style={styles.photoGrid}>
             {PHOTO_SLOTS.map((slot, index) => {
@@ -747,11 +893,16 @@ export default function SignUpScreen() {
                   style={[
                     styles.photoSlot,
                     isSelected && styles.photoSlotSelected,
-                    isProfileSlot && styles.photoSlotLocked,
+                    isProfileSlot && styles.photoSlotPrimary,
                   ]}
-                  disabled={isProfileSlot}
-                  onPress={isProfileSlot ? undefined : () => openPickerForSlot(index)}
+                  disabled={isPhotoSaving}
+                  onPress={() => openPickerForSlot(index)}
                 >
+                  {isProfileSlot ? (
+                    <View style={styles.primaryBadge}>
+                      <Text style={styles.primaryBadgeText}>Profile</Text>
+                    </View>
+                  ) : null}
                   {uri ? (
                     <Image source={{ uri }} style={styles.photoSlotImage} />
                   ) : (
@@ -780,16 +931,9 @@ export default function SignUpScreen() {
             <ActivityIndicator color={colors.text} />
           ) : (
             <Text style={styles.buttonText}>
-              {step === "profilePhotos6" ? "Finish" : "Continue"}
+              {step === "profilePicture" || step === "profilePhotos6" ? "Finish" : "Continue"}
             </Text>
           )}
-        </Pressable>
-      ) : null}
-      {step === "name" ? (
-        <Pressable onPress={() => void exitToSignIn()}>
-          <Text style={styles.signInLink}>
-            {session ? "Use a different account — Sign in" : "Already have an account? Sign in"}
-          </Text>
         </Pressable>
       ) : null}
       </ScrollView>
@@ -872,17 +1016,6 @@ const styles = StyleSheet.create({
   nameInput: {
     flex: 1,
     minWidth: 0,
-  },
-  stepHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  stepText: {
-    color: colors.mutedText,
-    fontFamily: typography.fontFamily,
-    fontSize: 14,
   },
   label: {
     color: colors.text,
@@ -1035,34 +1168,6 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
     marginTop: 4,
   },
-  profilePictureCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    overflow: "hidden",
-    aspectRatio: 3 / 4,
-    maxHeight: 420,
-    alignSelf: "center",
-    width: "100%",
-  },
-  profilePictureImage: {
-    width: "100%",
-    height: "100%",
-  },
-  profilePicturePlaceholder: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    padding: 24,
-  },
-  profilePicturePlaceholderText: {
-    color: colors.mutedText,
-    fontFamily: typography.fontFamily,
-    fontSize: 15,
-    textAlign: "center",
-  },
   photoPlaceholderIcon: {
     color: colors.mutedText,
     fontSize: 32,
@@ -1071,13 +1176,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    rowGap: 14,
+    rowGap: 10,
     marginTop: 4,
   },
   photoSlot: {
-    width: "48%",
-    aspectRatio: 3 / 4,
-    borderRadius: 16,
+    width: "31.5%",
+    aspectRatio: 1,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: "#FFF0F5",
@@ -1102,7 +1207,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#FFF0F5",
   },
-  photoSlotLocked: {
-    opacity: 0.95,
+  photoSlotPrimary: {
+    borderColor: colors.text,
+  },
+  primaryBadge: {
+    position: "absolute",
+    top: 6,
+    left: 6,
+    zIndex: 2,
+    backgroundColor: colors.text,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  primaryBadgeText: {
+    color: colors.background,
+    fontFamily: typography.fontFamily,
+    fontSize: 10,
+    fontWeight: "700",
   },
 });

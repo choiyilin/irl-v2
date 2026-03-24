@@ -23,14 +23,23 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 async function ensureProfileExists(user: User) {
   const fallbackName = user.email?.split('@')[0] ?? 'IRL User';
+  const metadata = user.user_metadata ?? {};
+  const gender = typeof metadata.gender === 'string' ? metadata.gender : null;
+  const sexualOrientation =
+    typeof metadata.sexual_orientation === 'string' ? metadata.sexual_orientation : null;
+  const interestedInSeeing =
+    typeof metadata.interested_in_seeing === 'string' ? metadata.interested_in_seeing : null;
+
   const { error } = await supabase.from('profiles').upsert(
     {
       id: user.id,
       display_name: fallbackName,
+      gender,
+      sexual_orientation: sexualOrientation,
+      interested_in_seeing: interestedInSeeing,
     },
     {
       onConflict: 'id',
-      ignoreDuplicates: true,
     },
   );
 

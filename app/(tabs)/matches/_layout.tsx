@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 
-import { IrlExploreMatchingHeader, IrlExploreMatchingHeaderWithBack } from '@/src/components/IrlMark';
+import { IrlExploreMatchingHeaderWithBack } from '@/src/components/IrlMark';
 import { colors } from '@/src/theme/colors';
 
 export default function MatchesLayout() {
@@ -19,7 +19,10 @@ export default function MatchesLayout() {
         name="index"
         options={{
           header: (props) => (
-            <IrlExploreMatchingHeader safeTopFromNav={props.insets?.top} />
+            <IrlExploreMatchingHeaderWithBack
+              safeTopFromNav={props.insets?.top}
+              backBehavior="explore"
+            />
           ),
         }}
       />

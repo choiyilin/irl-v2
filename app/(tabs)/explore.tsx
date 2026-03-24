@@ -25,12 +25,15 @@ type ExploreProfile = {
   bio: string | null;
   city: string | null;
   age: number | null;
+  gender?: string | null;
 };
 
 type DetailRowConfig = {
   key: string;
   icon: keyof typeof Ionicons.glyphMap;
 };
+
+const PHOTO_SLOT_COUNT = 6;
 
 const PLACEHOLDER_ROWS: DetailRowConfig[] = [
   { key: 'work', icon: 'briefcase-outline' },
@@ -41,6 +44,10 @@ const PLACEHOLDER_ROWS: DetailRowConfig[] = [
   { key: 'faith', icon: 'sparkles-outline' },
 ];
 
+function emptyPhotoSlots(): (string | null)[] {
+  return Array.from({ length: PHOTO_SLOT_COUNT }, () => null);
+}
+
 export default function ExploreScreen() {
   const { user } = useAuth();
   const userId = user?.id;
@@ -49,20 +56,53 @@ export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const [matchCount, setMatchCount] = useState(0);
   const [profiles, setProfiles] = useState<ExploreProfile[]>([]);
-  const [photoPathByUserId, setPhotoPathByUserId] = useState<Record<string, string>>({});
+  const [photoPathsByUserId, setPhotoPathsByUserId] = useState<Record<string, (string | null)[]>>({});
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [matchMessage, setMatchMessage] = useState('');
-  const [primaryImageUrl, setPrimaryImageUrl] = useState<string | null>(null);
+  const [signedPhotoUrls, setSignedPhotoUrls] = useState<(string | null)[]>(() => emptyPhotoSlots());
+
+  const interestedInSeeingRaw =
+    typeof user?.user_metadata?.interested_in_seeing === 'string'
+      ? (user.user_metadata.interested_in_seeing as string)
+      : '';
+
+  const allowedTargetGenders = useMemo<string[] | null>(() => {
+    const selections = interestedInSeeingRaw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (selections.length === 0 || selections.includes('Everyone')) return null;
+
+    const allowed = new Set<string>();
+    if (selections.includes('Women')) allowed.add('Woman');
+    if (selections.includes('Men')) allowed.add('Man');
+    if (selections.includes('Non-binary people')) {
+      allowed.add('Non-binary');
+      allowed.add('Prefer to self-describe');
+    }
+
+    return allowed.size === 0 ? null : Array.from(allowed);
+  }, [interestedInSeeingRaw]);
 
   const activeProfile = useMemo(() => profiles[currentIndex] ?? null, [currentIndex, profiles]);
+
+  /** Stable primitive dep so the signed-URL effect tracks path changes without fragile object identity. */
+  const activeUserPhotoPathsKey = useMemo(() => {
+    const id = activeProfile?.id;
+    if (!id) return '';
+    const row = photoPathsByUserId[id];
+    if (!row) return id;
+    return `${id}:${row.map((p) => (p == null ? '' : p)).join('|')}`;
+  }, [activeProfile?.id, photoPathsByUserId]);
 
   const loadExploreFeed = useCallback(async () => {
     if (!userId) {
       setProfiles([]);
-      setPhotoPathByUserId({});
+      setPhotoPathsByUserId({});
       setCurrentIndex(0);
       setIsLoading(false);
       return;
@@ -72,50 +112,82 @@ export default function ExploreScreen() {
     setErrorMessage('');
 
     try {
-      const [{ data: allProfiles, error: profilesError }, { data: likedRows, error: likesError }] =
-        await Promise.all([
-          supabase.from('profiles').select('id, display_name, bio, city, age').neq('id', userId),
-          supabase.from('profile_likes').select('liked_id').eq('liker_id', userId),
-        ]);
-
-      if (profilesError) throw profilesError;
+      const { data: likedRows, error: likesError } = await supabase
+        .from('profile_likes')
+        .select('liked_id')
+        .eq('liker_id', userId);
       if (likesError) throw likesError;
 
+      let allProfiles: ExploreProfile[] = [];
+      if (allowedTargetGenders) {
+        const { data: genderProfiles, error: genderProfilesError } = await supabase
+          .from('profiles')
+          .select('id, display_name, bio, city, age, gender')
+          .neq('id', userId)
+          .in('gender', allowedTargetGenders);
+
+        if (genderProfilesError) {
+          // If the migration hasn't been applied yet (missing columns), fall back
+          // so Explore still works (but won’t be preference-filtered).
+          const { data: fallbackProfiles, error: fallbackError } = await supabase
+            .from('profiles')
+            .select('id, display_name, bio, city, age')
+            .neq('id', userId);
+          if (fallbackError) throw fallbackError;
+          allProfiles = (fallbackProfiles ?? []) as ExploreProfile[];
+        } else {
+          allProfiles = (genderProfiles ?? []) as ExploreProfile[];
+        }
+      } else {
+        const { data: baseProfiles, error: baseProfilesError } = await supabase
+          .from('profiles')
+          .select('id, display_name, bio, city, age')
+          .neq('id', userId);
+        if (baseProfilesError) throw baseProfilesError;
+        allProfiles = (baseProfiles ?? []) as ExploreProfile[];
+      }
+
       const likedIdSet = new Set((likedRows ?? []).map((row) => row.liked_id as string));
-      const filteredProfiles = (allProfiles ?? []).filter(
-        (profile) =>
-          profile.id !== userId &&
-          !likedIdSet.has(profile.id as string),
-      ) as ExploreProfile[];
+      const filteredProfiles = allProfiles.filter(
+        (profile) => !likedIdSet.has(profile.id as string),
+      );
 
       setProfiles(filteredProfiles);
       setCurrentIndex(0);
 
       const ids = filteredProfiles.map((p) => p.id);
       if (ids.length === 0) {
-        setPhotoPathByUserId({});
+        setPhotoPathsByUserId({});
         return;
       }
 
       const { data: photoRows, error: photosError } = await supabase
         .from('profile_photos')
-        .select('user_id, storage_path')
+        .select('user_id, storage_path, slot_index')
         .in('user_id', ids)
-        .eq('slot_index', 1);
+        .gte('slot_index', 1)
+        .lte('slot_index', PHOTO_SLOT_COUNT);
 
       if (photosError) throw photosError;
 
-      const pathMap: Record<string, string> = {};
-      for (const row of photoRows ?? []) {
-        pathMap[row.user_id as string] = row.storage_path as string;
+      const pathMap: Record<string, (string | null)[]> = {};
+      for (const id of ids) {
+        pathMap[id] = emptyPhotoSlots();
       }
-      setPhotoPathByUserId(pathMap);
+      for (const row of photoRows ?? []) {
+        const uid = row.user_id as string;
+        const slot = (row.slot_index as number) - 1;
+        if (slot < 0 || slot >= PHOTO_SLOT_COUNT) continue;
+        if (!pathMap[uid]) pathMap[uid] = emptyPhotoSlots();
+        pathMap[uid][slot] = row.storage_path as string;
+      }
+      setPhotoPathsByUserId(pathMap);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load explore feed.');
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [userId, allowedTargetGenders]);
 
   useEffect(() => {
     loadExploreFeed();
@@ -161,30 +233,46 @@ export default function ExploreScreen() {
 
     const run = async () => {
       if (!activeProfile) {
-        setPrimaryImageUrl(null);
+        setSignedPhotoUrls(emptyPhotoSlots());
         return;
       }
-      const path = photoPathByUserId[activeProfile.id];
-      if (!path) {
-        setPrimaryImageUrl(null);
+      const paths = photoPathsByUserId[activeProfile.id] ?? emptyPhotoSlots();
+      const withIndex = paths
+        .map((p, index) => (p ? { path: p, index } : null))
+        .filter((x): x is { path: string; index: number } => x !== null);
+      if (withIndex.length === 0) {
+        setSignedPhotoUrls(emptyPhotoSlots());
         return;
       }
       const { data, error } = await supabase.storage
         .from('profile-photos')
-        .createSignedUrl(path, 60 * 60);
+        .createSignedUrls(
+          withIndex.map((x) => x.path),
+          60 * 60,
+        );
       if (cancelled) return;
-      if (error || !data?.signedUrl) {
-        setPrimaryImageUrl(null);
+      const next = emptyPhotoSlots();
+      if (error || !data) {
+        setSignedPhotoUrls(next);
         return;
       }
-      setPrimaryImageUrl(data.signedUrl);
+      withIndex.forEach((item, i) => {
+        const row = data[i];
+        if (row?.signedUrl && !row.error) {
+          next[item.index] = row.signedUrl;
+        }
+      });
+      setSignedPhotoUrls(next);
     };
 
     void run();
     return () => {
       cancelled = true;
     };
-  }, [activeProfile?.id, photoPathByUserId]);
+  }, [activeProfile?.id, activeUserPhotoPathsKey]);
+
+  const heroPhotoUri = signedPhotoUrls[0] ?? null;
+  const secondaryPhotoUrlsForCard = signedPhotoUrls.slice(1, PHOTO_SLOT_COUNT);
 
   const goNextProfile = () => {
     setMatchMessage('');
@@ -195,7 +283,7 @@ export default function ExploreScreen() {
     goNextProfile();
   };
 
-  const handleLike = async () => {
+  const handleLike = async (photoSlot: number) => {
     if (!userId || !activeProfile) return;
     setIsSubmitting(true);
     setErrorMessage('');
@@ -204,7 +292,14 @@ export default function ExploreScreen() {
     try {
       const { error: likeError } = await supabase
         .from('profile_likes')
-        .insert({ liker_id: userId, liked_id: activeProfile.id });
+        .upsert(
+          {
+            liker_id: userId,
+            liked_id: activeProfile.id,
+            liked_photo_slot: photoSlot,
+          },
+          { onConflict: 'liker_id,liked_id' },
+        );
       if (likeError) throw likeError;
 
       const { data: reverseLike, error: reverseLikeError } = await supabase
@@ -242,8 +337,9 @@ export default function ExploreScreen() {
   const displayName = activeProfile?.display_name?.trim() || 'Member';
   const ageLabel = activeProfile?.age != null ? `${activeProfile.age}` : '—';
 
-  /** Space so actions sit above the floating tab bar + home indicator */
-  const scrollBottomInset = Math.max(insets.bottom, 16) + 96;
+  /** Keep content clear of tab bar + floating pass button. */
+  const floatingPassBottom = Math.max(insets.bottom, 16) + 72;
+  const scrollBottomPadding = floatingPassBottom + 92;
 
   if (isLoading) {
     return (
@@ -262,18 +358,36 @@ export default function ExploreScreen() {
         <>
           <ScrollView
             style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: scrollBottomPadding }]}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled">
             <View style={styles.card}>
               <View style={styles.photoBlock}>
-                {primaryImageUrl ? (
-                  <Image source={{ uri: primaryImageUrl }} style={styles.heroImage} resizeMode="cover" />
+                {heroPhotoUri ? (
+                  <Image source={{ uri: heroPhotoUri }} style={styles.heroImage} resizeMode="cover" />
                 ) : (
                   <View style={[styles.heroImage, styles.heroPlaceholder]}>
                     <Ionicons name="person-outline" size={64} color={colors.mutedText} />
                   </View>
                 )}
+                <View style={styles.photoActionsOverlay}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.likeOverlayButton,
+                      pressed && !isSubmitting && styles.likeButtonPressScale,
+                      isSubmitting && styles.disabled,
+                    ]}
+                    onPress={() => void handleLike(1)}
+                    disabled={isSubmitting}
+                    accessibilityRole="button"
+                    accessibilityLabel="Like photo 1">
+                    {isSubmitting ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Ionicons name="heart-outline" size={28} color={colors.brandPink} />
+                    )}
+                  </Pressable>
+                </View>
               </View>
 
               <View style={styles.nameRow}>
@@ -292,56 +406,52 @@ export default function ExploreScreen() {
                   </View>
                 ))}
               </View>
-            </View>
 
-            <View style={[styles.actionSection, { paddingBottom: scrollBottomInset }]}>
-              <View style={styles.actionRow}>
-                <View style={styles.actionItem}>
-                  <Pressable
-                    style={({ pressed }) => [styles.passButton, pressed && styles.actionPressed]}
-                    onPress={handlePass}
-                    disabled={isSubmitting}
-                    accessibilityRole="button"
-                    accessibilityLabel="Pass">
-                    <Ionicons name="close" size={32} color="#5C5C66" />
-                  </Pressable>
-                  <Text style={styles.actionCaption}>Pass</Text>
-                </View>
-                <Pressable
-                  style={styles.actionItem}
-                  onPress={handleLike}
-                  disabled={isSubmitting}
-                  accessibilityRole="button"
-                  accessibilityLabel="Like">
-                  {({ pressed }) => {
-                    const active = pressed || isSubmitting;
-                    return (
-                      <>
-                        <View
-                          style={[
-                            styles.likeButton,
-                            active && styles.likeButtonHighlighted,
+              <View style={styles.morePhotosSection}>
+                <View style={styles.morePhotosStack}>
+                  {secondaryPhotoUrlsForCard.map((uri, i) => (
+                    <View key={`slot-${i + 2}`} style={styles.morePhotoStackItem}>
+                      {uri ? (
+                        <Image source={{ uri }} style={styles.heroImage} resizeMode="cover" />
+                      ) : (
+                        <View style={[styles.heroImage, styles.heroPlaceholder]}>
+                          <Ionicons name="image-outline" size={48} color={colors.mutedText} />
+                        </View>
+                      )}
+                      <View style={styles.secondaryPhotoLikeWrap}>
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.likeOverlayButton,
                             pressed && !isSubmitting && styles.likeButtonPressScale,
                             isSubmitting && styles.disabled,
-                          ]}>
+                          ]}
+                          onPress={() => void handleLike(i + 2)}
+                          disabled={isSubmitting}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Like photo ${i + 2}`}>
                           {isSubmitting ? (
                             <ActivityIndicator color="#FFFFFF" />
                           ) : (
-                            <Ionicons
-                              name={pressed ? 'heart' : 'heart-outline'}
-                              size={32}
-                              color={pressed ? '#FFFFFF' : colors.brandPink}
-                            />
+                            <Ionicons name="heart-outline" size={26} color={colors.brandPink} />
                           )}
-                        </View>
-                        <Text style={[styles.actionCaption, active && styles.actionCaptionLike]}>Like</Text>
-                      </>
-                    );
-                  }}
-                </Pressable>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </View>
               </View>
             </View>
           </ScrollView>
+          <View style={[styles.floatingPassWrap, { bottom: floatingPassBottom }]}>
+            <Pressable
+              style={({ pressed }) => [styles.passOverlayButton, pressed && styles.actionPressed]}
+              onPress={handlePass}
+              disabled={isSubmitting}
+              accessibilityRole="button"
+              accessibilityLabel="Pass profile">
+              <Ionicons name="close" size={28} color="#5C5C66" />
+            </Pressable>
+          </View>
         </>
       ) : (
         <View style={styles.emptyWrap}>
@@ -436,25 +546,38 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.mutedText,
   },
-  actionSection: {
-    marginTop: 8,
-    paddingTop: 20,
-    alignItems: 'center',
+  morePhotosSection: {
+    marginTop: 20,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
-  actionRow: {
+  morePhotosStack: {
+    flexDirection: 'column',
+    gap: 16,
+  },
+  morePhotoStackItem: {
+    position: 'relative',
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#F0F0F0',
+  },
+  photoActionsOverlay: {
+    position: 'absolute',
+    right: 14,
+    bottom: 14,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    gap: 44,
-  },
-  actionItem: {
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'flex-end',
   },
-  passButton: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+  floatingPassWrap: {
+    position: 'absolute',
+    left: 16,
+  },
+  passOverlayButton: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
     backgroundColor: '#FFFFFF',
     borderWidth: 1.5,
     borderColor: '#E2E2E8',
@@ -466,42 +589,28 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 5,
   },
-  likeButton: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+  likeOverlayButton: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: colors.brandPink,
+    borderWidth: 1,
+    borderColor: '#E7E7ED',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 10,
     elevation: 4,
   },
-  likeButtonHighlighted: {
-    backgroundColor: colors.brandPink,
-    borderColor: colors.brandPink,
-    shadowColor: colors.brandPink,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 10,
+  secondaryPhotoLikeWrap: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
   },
   likeButtonPressScale: {
     transform: [{ scale: 0.94 }],
-  },
-  actionCaption: {
-    fontFamily: typography.fontFamily,
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.mutedText,
-    letterSpacing: 0.2,
-  },
-  actionCaptionLike: {
-    color: colors.brandPink,
   },
   actionPressed: {
     opacity: 0.92,

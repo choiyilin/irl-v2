@@ -82,20 +82,42 @@ export function IrlExploreMatchingHeader({ safeTopFromNav }: { safeTopFromNav?: 
   );
 }
 
-/** Matches stack detail: back + IRL (same top/side padding as tab headers) */
-export function IrlExploreMatchingHeaderWithBack({ safeTopFromNav }: { safeTopFromNav?: number } = {}) {
+type MatchesBackBehavior = 'pop' | 'explore';
+
+/**
+ * Matches stack: back + IRL. Use `explore` on the list so we always return to the feed
+ * (reliable with tab + stack). Use `pop` on match profile to return to the list.
+ */
+export function IrlExploreMatchingHeaderWithBack({
+  safeTopFromNav,
+  backBehavior = 'pop',
+}: {
+  safeTopFromNav?: number;
+  backBehavior?: MatchesBackBehavior;
+} = {}) {
   const padTop = useHeaderPaddingTop(safeTopFromNav);
   const router = useRouter();
+  const onBack = () => {
+    if (backBehavior === 'explore') {
+      router.replace('/(tabs)/explore');
+      return;
+    }
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(tabs)/explore');
+  };
   return (
     <View style={[styles.headerBar, styles.headerBarFullWidth, { paddingTop: padTop }]}>
       <View style={styles.headerRow}>
         <Pressable
-          onPress={() => router.back()}
-          hitSlop={12}
+          onPress={onBack}
+          hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}
           style={styles.backBtn}
           accessibilityRole="button"
-          accessibilityLabel="Go back">
-          <Ionicons name="chevron-back" size={26} color={colors.text} />
+          accessibilityLabel={backBehavior === 'explore' ? 'Back to explore' : 'Go back'}>
+          <Ionicons name="chevron-back" size={28} color={colors.text} />
         </Pressable>
         <Text style={styles.logo} accessibilityRole="header">
           IRL
@@ -131,9 +153,14 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   backBtn: {
-    marginLeft: -6,
+    marginLeft: -8,
+    marginRight: 2,
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingVertical: 4,
-    paddingRight: 4,
+    paddingRight: 2,
   },
   logo: {
     fontFamily: typography.fontFamily,

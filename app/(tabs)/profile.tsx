@@ -27,13 +27,7 @@ const GENDER_OPTIONS = ["Man", "Woman", "Non-binary", "Prefer to self-describe"]
 const ORIENTATION_OPTIONS = [
   "Straight",
   "Gay",
-  "Lesbian",
   "Bisexual",
-  "Pansexual",
-  "Asexual",
-  "Queer",
-  "Questioning",
-  "Prefer not to say",
 ] as const;
 const INTERESTED_IN_OPTIONS = ["Women", "Men", "Non-binary people", "Everyone"] as const;
 

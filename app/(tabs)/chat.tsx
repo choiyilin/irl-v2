@@ -5,7 +5,7 @@ import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View }
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/providers/AuthProvider';
 import { colors } from '@/src/theme/colors';
-import { playfairCaptionBold, typography } from '@/src/theme/typography';
+import { typography } from '@/src/theme/typography';
 
 type ChatListItem = {
   matchId: string;
@@ -356,10 +356,11 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontFamily: playfairCaptionBold,
-    fontSize: 38,
-    fontWeight: '400',
-    lineHeight: 46,
+    fontFamily: typography.fontFamily,
+    fontSize: 30,
+    fontWeight: '700',
+    lineHeight: 38,
+    letterSpacing: -0.3,
     marginTop: 2,
   },
   segmentedRow: {
@@ -382,10 +383,10 @@ const styles = StyleSheet.create({
   },
   segmentText: {
     color: colors.tabInactive,
-    fontFamily: playfairCaptionBold,
-    fontSize: 16,
-    fontWeight: '400',
-    letterSpacing: 0.2,
+    fontFamily: typography.fontFamily,
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.1,
   },
   segmentTextActive: {
     color: colors.text,

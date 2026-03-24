@@ -27,7 +27,6 @@ const ORIENTATION_OPTIONS = [
   "Straight",
   "Gay",
   "Bisexual",
-  "Prefer not to say",
 ];
 
 function OptionChips<T extends string>({

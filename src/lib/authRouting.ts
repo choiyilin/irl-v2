@@ -10,9 +10,10 @@ import { supabase } from '@/src/lib/supabase';
 export function hasFinishedAppOnboarding(user: User | null | undefined): boolean {
   if (!user) return false;
   const m = user.user_metadata ?? {};
-  if (m.has_completed_signup_profile === true) return true;
-  if (m.has_uploaded_photos === true) return true;
-  return false;
+  // New onboarding flow completion is explicitly tracked.
+  // We intentionally do NOT treat `has_uploaded_photos` as "complete" because
+  // users must not enter the app until they finish the full profile setup wizard.
+  return m.has_completed_signup_profile === true;
 }
 
 export type LegacyOnboardingSignals = {
@@ -48,7 +49,11 @@ export async function fetchLegacyOnboardingSignals(userId: string): Promise<Lega
       (typeof p.bio === 'string' && p.bio.trim().length > 0));
 
   return {
-    canEnterMainApp: hasProfilePhotos || profileLooksFilled,
+    // Legacy accounts may not have the new metadata flags.
+    // To satisfy "never enter tabs with an incomplete profile", we require both:
+    // - at least one profile photo, and
+    // - some additional profile content that indicates onboarding was finished.
+    canEnterMainApp: hasProfilePhotos && profileLooksFilled,
     hasProfilePhotos,
   };
 }
