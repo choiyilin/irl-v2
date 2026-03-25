@@ -157,7 +157,7 @@ export default function MatchesScreen() {
             accessibilityLabel={`Open ${item.displayName}'s profile`}>
             <View style={styles.avatarWrap}>
               {item.avatarUrl ? (
-                <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                <Image source={{ uri: item.avatarUrl }} style={styles.avatar} resizeMode="cover" />
               ) : (
                 <View style={[styles.avatar, styles.avatarPlaceholder]}>
                   <Ionicons name="person-outline" size={28} color={colors.mutedText} />

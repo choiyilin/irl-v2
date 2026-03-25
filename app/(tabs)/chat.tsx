@@ -315,7 +315,7 @@ export default function ChatScreen() {
               style={styles.chatRow}
               onPress={() => router.push(`/chat/${item.matchId}` as never)}>
               {item.avatarUrl ? (
-                <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                <Image source={{ uri: item.avatarUrl }} style={styles.avatar} resizeMode="cover" />
               ) : (
                 <View style={[styles.avatar, styles.avatarFallback]}>
                   <Text style={styles.avatarFallbackText}>
@@ -445,6 +445,7 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.08)',
+    overflow: 'hidden',
   },
   avatarFallback: {
     backgroundColor: '#F4D3E0',

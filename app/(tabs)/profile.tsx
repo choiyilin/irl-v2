@@ -19,6 +19,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HeightScrollPicker } from "@/src/components/HeightScrollPicker";
 import { coerceHeightFtIn } from "@/src/lib/heightOptions";
 import { getImageUploadPayload } from "@/src/lib/getImageUploadPayload";
+import {
+  getCachedPrimaryProfilePhoto,
+  invalidatePrimaryProfilePhotoCache,
+  warmPrimaryProfilePhoto,
+} from "@/src/lib/primaryProfilePhotoCache";
 import { supabase } from "@/src/lib/supabase";
 import { useAuth } from "@/src/providers/AuthProvider";
 import { colors } from "@/src/theme/colors";
@@ -230,7 +235,22 @@ export default function ProfileScreen() {
 
     const loadPhotos = async () => {
       if (!userId) return;
-      setIsLoadingPhotos(true);
+
+      await warmPrimaryProfilePhoto(userId);
+      if (isCancelled) return;
+
+      const cachedPrimary = getCachedPrimaryProfilePhoto(userId);
+      if (cachedPrimary) {
+        setPhotos(() => {
+          const primed: (ProfilePhoto | null)[] = PHOTO_SLOTS.map(() => null);
+          primed[0] = cachedPrimary;
+          return primed;
+        });
+        if (!isCancelled) setIsLoadingPhotos(false);
+      } else {
+        setIsLoadingPhotos(true);
+      }
+
       const { data, error } = await supabase
         .from("profile_photos")
         .select("id, slot_index, storage_path")
@@ -447,6 +467,10 @@ export default function ProfileScreen() {
         });
 
         await persistPhotoSlot(user.id, index + 1, data.path);
+        if (index === 0) {
+          invalidatePrimaryProfilePhotoCache(user.id);
+          void warmPrimaryProfilePhoto(user.id);
+        }
         setPhotoDraftDirty(false);
         setInfoMessage("Photo updated.");
 
@@ -585,17 +609,23 @@ export default function ProfileScreen() {
         <View style={styles.headerLeft}>
           <View style={styles.avatarContainer}>
             <View style={styles.avatarWrap}>
-              <View style={styles.avatar}>
-                {primaryPhoto ? (
-                  <Image source={{ uri: primaryPhoto.displayUrl }} style={styles.avatarImage} />
-                ) : (
-                  <View style={styles.avatarPlaceholder}>
-                    <Text style={styles.avatarInitials}>
-                      {(firstName?.[0] ?? "").toUpperCase() ||
-                        (user?.email?.[0] ?? "?").toUpperCase()}
-                    </Text>
-                  </View>
-                )}
+              <View style={styles.avatarRing}>
+                <View style={styles.avatarDisk}>
+                  {primaryPhoto ? (
+                    <Image
+                      source={{ uri: primaryPhoto.displayUrl }}
+                      style={styles.avatarImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={styles.avatarPlaceholder}>
+                      <Text style={styles.avatarInitials}>
+                        {(firstName?.[0] ?? "").toUpperCase() ||
+                          (user?.email?.[0] ?? "?").toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                </View>
               </View>
             </View>
           </View>
@@ -678,7 +708,11 @@ export default function ProfileScreen() {
                     accessibilityLabel={`Edit photo ${slot}`}
                   >
                     {photo ? (
-                      <Image source={{ uri: photo.displayUrl }} style={styles.photoImage} />
+                      <Image
+                        source={{ uri: photo.displayUrl }}
+                        style={styles.photoImage}
+                        resizeMode="cover"
+                      />
                     ) : (
                       <View style={styles.photoPlaceholder}>
                         <Text style={styles.photoPlaceholderIcon}>No photo</Text>
@@ -999,19 +1033,27 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
   },
-  avatar: {
-    height: 120,
+  /** Border lives here; clipping happens on `avatarDisk` so the photo isn’t inset from a shared border+clip view (avoids grey hairlines on many RN builds). */
+  avatarRing: {
     width: 120,
+    height: 120,
     borderRadius: 60,
     borderWidth: 3,
     borderColor: colors.border,
-    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: colors.background,
+  },
+  avatarDisk: {
+    width: 114,
+    height: 114,
+    borderRadius: 57,
+    overflow: "hidden",
   },
   avatarImage: {
-    height: "100%",
-    width: "100%",
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "transparent",
+    transform: [{ scale: 1.06 }],
   },
   avatarPlaceholder: {
     height: "100%",
@@ -1086,15 +1128,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
     padding: 0,
     backgroundColor: colors.background,
   },
   photoImage: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 0,
+    ...StyleSheet.absoluteFillObject,
   },
   photoPlaceholder: {
     width: "100%",

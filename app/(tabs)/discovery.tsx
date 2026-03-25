@@ -32,6 +32,8 @@ const SCREEN_HEIGHT = Dimensions.get('window').height;
 const SHEET_MAX_HEIGHT = Math.max(340, Math.min(520, SCREEN_HEIGHT * 0.55));
 const SHEET_MIN_HEIGHT = 170;
 const SHEET_COLLAPSED_OFFSET = SHEET_MAX_HEIGHT - SHEET_MIN_HEIGHT;
+// Matches `tabBarStyle` in `app/(tabs)/_layout.tsx` (absolute + bottom offset).
+const TAB_BAR_TOTAL_HEIGHT = 24 + 64;
 const FILTER_OPTIONS = ['All', 'Bars', 'Clubs', 'Restaurants'] as const;
 
 const getPromoBadgeLabel = (description: string): string => {
@@ -561,7 +563,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
+    bottom: TAB_BAR_TOTAL_HEIGHT,
     height: SHEET_MAX_HEIGHT,
     backgroundColor: 'rgba(255,255,255,0.98)',
     borderTopLeftRadius: 24,

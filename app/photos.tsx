@@ -176,7 +176,7 @@ export default function PhotosScreen() {
               onPress={() => openPickerForSlot(index)}
             >
               {uri ? (
-                <Image source={{ uri }} style={styles.photoImage} />
+                <Image source={{ uri }} style={styles.photoImage} resizeMode="cover" />
               ) : (
                 <View style={styles.photoPlaceholder}>
                   <Text style={styles.photoPlaceholderIcon}>＋</Text>
@@ -258,6 +258,7 @@ const styles = StyleSheet.create({
     height: "70%",
     borderRadius: 12,
     marginBottom: 8,
+    overflow: "hidden",
   },
   photoPlaceholder: {
     flex: 1,

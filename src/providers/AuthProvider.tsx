@@ -3,6 +3,10 @@ import { createContext, PropsWithChildren, useContext, useEffect, useMemo, useSt
 
 import { env } from '@/src/config/env';
 import { fetchLegacyOnboardingSignals, hasFinishedAppOnboarding } from '@/src/lib/authRouting';
+import {
+  invalidatePrimaryProfilePhotoCache,
+  warmPrimaryProfilePhoto,
+} from '@/src/lib/primaryProfilePhotoCache';
 import { supabase } from '@/src/lib/supabase';
 
 type AuthContextValue = {
@@ -74,6 +78,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       }
       if (data.session?.user) {
         await ensureProfileExists(data.session.user);
+        void warmPrimaryProfilePhoto(data.session.user.id);
+      } else {
+        invalidatePrimaryProfilePhotoCache();
       }
     };
 
@@ -85,7 +92,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setSession(nextSession);
       setIsLoading(false);
       if (nextSession?.user) {
-        ensureProfileExists(nextSession.user);
+        void ensureProfileExists(nextSession.user);
+        void warmPrimaryProfilePhoto(nextSession.user.id);
+      } else {
+        invalidatePrimaryProfilePhotoCache();
       }
     });
 

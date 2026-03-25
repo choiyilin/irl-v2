@@ -1022,7 +1022,7 @@ export default function SignUpScreen() {
                     </View>
                   ) : null}
                   {uri ? (
-                    <Image source={{ uri }} style={styles.photoSlotImage} />
+                    <Image source={{ uri }} style={styles.photoSlotImage} resizeMode="cover" />
                   ) : (
                     <View style={styles.photoSlotPlaceholder}>
                       <Text style={styles.photoPlaceholderIcon}>＋</Text>
@@ -1365,16 +1365,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF0F5",
     padding: 0,
     overflow: "hidden",
-    justifyContent: "center",
-    alignItems: "center",
   },
   photoSlotSelected: {
     borderColor: colors.text,
   },
   photoSlotImage: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 0,
+    ...StyleSheet.absoluteFillObject,
   },
   photoSlotPlaceholder: {
     width: "100%",
