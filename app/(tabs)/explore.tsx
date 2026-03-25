@@ -26,23 +26,24 @@ type ExploreProfile = {
   city: string | null;
   age: number | null;
   gender?: string | null;
+  occupation?: string | null;
+  education?: string | null;
+  hometown?: string | null;
+  height?: string | null;
+  show_occupation?: boolean | null;
+  show_education?: boolean | null;
+  show_city?: boolean | null;
+  show_hometown?: boolean | null;
+  show_height?: boolean | null;
 };
 
 type DetailRowConfig = {
   key: string;
   icon: keyof typeof Ionicons.glyphMap;
+  value: string;
 };
 
 const PHOTO_SLOT_COUNT = 6;
-
-const PLACEHOLDER_ROWS: DetailRowConfig[] = [
-  { key: 'work', icon: 'briefcase-outline' },
-  { key: 'school', icon: 'school-outline' },
-  { key: 'neighborhood', icon: 'location-outline' },
-  { key: 'hometown', icon: 'home-outline' },
-  { key: 'height', icon: 'resize-outline' },
-  { key: 'faith', icon: 'sparkles-outline' },
-];
 
 function emptyPhotoSlots(): (string | null)[] {
   return Array.from({ length: PHOTO_SLOT_COUNT }, () => null);
@@ -122,7 +123,9 @@ export default function ExploreScreen() {
       if (allowedTargetGenders) {
         const { data: genderProfiles, error: genderProfilesError } = await supabase
           .from('profiles')
-          .select('id, display_name, bio, city, age, gender')
+          .select(
+            'id, display_name, bio, city, age, gender, occupation, education, hometown, height, show_occupation, show_education, show_city, show_hometown, show_height',
+          )
           .neq('id', userId)
           .in('gender', allowedTargetGenders);
 
@@ -131,7 +134,9 @@ export default function ExploreScreen() {
           // so Explore still works (but won’t be preference-filtered).
           const { data: fallbackProfiles, error: fallbackError } = await supabase
             .from('profiles')
-            .select('id, display_name, bio, city, age')
+            .select(
+              'id, display_name, bio, city, age, occupation, education, hometown, height, show_occupation, show_education, show_city, show_hometown, show_height',
+            )
             .neq('id', userId);
           if (fallbackError) throw fallbackError;
           allProfiles = (fallbackProfiles ?? []) as ExploreProfile[];
@@ -141,7 +146,9 @@ export default function ExploreScreen() {
       } else {
         const { data: baseProfiles, error: baseProfilesError } = await supabase
           .from('profiles')
-          .select('id, display_name, bio, city, age')
+          .select(
+            'id, display_name, bio, city, age, occupation, education, hometown, height, show_occupation, show_education, show_city, show_hometown, show_height',
+          )
           .neq('id', userId);
         if (baseProfilesError) throw baseProfilesError;
         allProfiles = (baseProfiles ?? []) as ExploreProfile[];
@@ -336,6 +343,28 @@ export default function ExploreScreen() {
 
   const displayName = activeProfile?.display_name?.trim() || 'Member';
   const ageLabel = activeProfile?.age != null ? `${activeProfile.age}` : '—';
+  const detailRows = useMemo<DetailRowConfig[]>(() => {
+    if (!activeProfile) return [];
+    const rows: DetailRowConfig[] = [];
+
+    if (activeProfile.show_occupation !== false && activeProfile.occupation?.trim()) {
+      rows.push({ key: 'work', icon: 'briefcase-outline', value: activeProfile.occupation.trim() });
+    }
+    if (activeProfile.show_education !== false && activeProfile.education?.trim()) {
+      rows.push({ key: 'school', icon: 'school-outline', value: activeProfile.education.trim() });
+    }
+    if (activeProfile.show_city !== false && activeProfile.city?.trim()) {
+      rows.push({ key: 'city', icon: 'location-outline', value: activeProfile.city.trim() });
+    }
+    if (activeProfile.show_hometown !== false && activeProfile.hometown?.trim()) {
+      rows.push({ key: 'hometown', icon: 'home-outline', value: activeProfile.hometown.trim() });
+    }
+    if (activeProfile.show_height !== false && activeProfile.height?.trim()) {
+      rows.push({ key: 'height', icon: 'resize-outline', value: activeProfile.height.trim() });
+    }
+
+    return rows;
+  }, [activeProfile]);
 
   /** Keep content clear of tab bar + floating pass button. */
   const floatingPassBottom = Math.max(insets.bottom, 16) + 72;
@@ -397,12 +426,12 @@ export default function ExploreScreen() {
               </View>
 
               <View style={styles.detailsList}>
-                {PLACEHOLDER_ROWS.map((row, index) => (
+                {detailRows.map((row, index) => (
                   <View
                     key={row.key}
                     style={[styles.detailRow, index > 0 ? styles.detailRowBorder : null]}>
                     <Ionicons name={row.icon} size={20} color={colors.mutedText} style={styles.detailIcon} />
-                    <Text style={styles.detailPlaceholder}> </Text>
+                    <Text style={styles.detailValue}>{row.value}</Text>
                   </View>
                 ))}
               </View>
@@ -540,11 +569,11 @@ const styles = StyleSheet.create({
   detailIcon: {
     width: 28,
   },
-  detailPlaceholder: {
+  detailValue: {
     flex: 1,
     fontFamily: typography.fontFamily,
     fontSize: 15,
-    color: colors.mutedText,
+    color: colors.text,
   },
   morePhotosSection: {
     marginTop: 20,

@@ -9,12 +9,15 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { HeightScrollPicker } from "@/src/components/HeightScrollPicker";
+import { coerceHeightFtIn } from "@/src/lib/heightOptions";
 import { getImageUploadPayload } from "@/src/lib/getImageUploadPayload";
 import { supabase } from "@/src/lib/supabase";
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -22,6 +25,9 @@ import { colors } from "@/src/theme/colors";
 import { typography } from "@/src/theme/typography";
 
 const PHOTO_SLOTS = [1, 2, 3, 4, 5, 6];
+
+/** Matches `tabBarStyle` in `app/(tabs)/_layout.tsx` (absolute bar + bottom offset). */
+const TAB_BAR_FLOAT_CLEARANCE = 24 + 64;
 
 const GENDER_OPTIONS = ["Man", "Woman", "Non-binary", "Prefer to self-describe"] as const;
 const ORIENTATION_OPTIONS = [
@@ -49,6 +55,19 @@ type PromotionTicket = {
     ends_at: string | null;
     is_active: boolean;
   };
+};
+
+type ProfileAbout = {
+  occupation: string | null;
+  education: string | null;
+  city: string | null;
+  hometown: string | null;
+  height: string | null;
+  show_occupation: boolean | null;
+  show_education: boolean | null;
+  show_city: boolean | null;
+  show_hometown: boolean | null;
+  show_height: boolean | null;
 };
 
 function formatClaimedDate(iso: string) {
@@ -118,6 +137,17 @@ export default function ProfileScreen() {
   const [settingsGender, setSettingsGender] = useState<string>("");
   const [settingsSexualOrientation, setSettingsSexualOrientation] = useState<string>("");
   const [settingsInterestedIn, setSettingsInterestedIn] = useState<string[]>([]);
+  const [profileAbout, setProfileAbout] = useState<ProfileAbout | null>(null);
+  const [settingsOccupation, setSettingsOccupation] = useState("");
+  const [settingsEducation, setSettingsEducation] = useState("");
+  const [settingsCity, setSettingsCity] = useState("");
+  const [settingsHometown, setSettingsHometown] = useState("");
+  const [settingsHeight, setSettingsHeight] = useState("");
+  const [showOccupation, setShowOccupation] = useState(true);
+  const [showEducation, setShowEducation] = useState(true);
+  const [showCity, setShowCity] = useState(true);
+  const [showHometown, setShowHometown] = useState(true);
+  const [showHeight, setShowHeight] = useState(true);
 
   const email = user?.email ?? "";
   const metadata = user?.user_metadata ?? {};
@@ -150,6 +180,16 @@ export default function ProfileScreen() {
     } else {
       setSettingsInterestedIn(parsed);
     }
+    setSettingsOccupation(profileAbout?.occupation ?? "");
+    setSettingsEducation(profileAbout?.education ?? "");
+    setSettingsCity(profileAbout?.city ?? "");
+    setSettingsHometown(profileAbout?.hometown ?? "");
+    setSettingsHeight(coerceHeightFtIn(profileAbout?.height ?? ""));
+    setShowOccupation(profileAbout?.show_occupation ?? true);
+    setShowEducation(profileAbout?.show_education ?? true);
+    setShowCity(profileAbout?.show_city ?? true);
+    setShowHometown(profileAbout?.show_hometown ?? true);
+    setShowHeight(profileAbout?.show_height ?? true);
   }, [
     isSettingsOpen,
     metadata.first_name,
@@ -157,6 +197,16 @@ export default function ProfileScreen() {
     metadata.gender,
     metadata.sexual_orientation,
     metadata.interested_in_seeing,
+    profileAbout?.occupation,
+    profileAbout?.education,
+    profileAbout?.city,
+    profileAbout?.hometown,
+    profileAbout?.height,
+    profileAbout?.show_occupation,
+    profileAbout?.show_education,
+    profileAbout?.show_city,
+    profileAbout?.show_hometown,
+    profileAbout?.show_height,
   ]);
 
   const toggleInterestedIn = (option: string) => {
@@ -231,6 +281,32 @@ export default function ProfileScreen() {
     return () => {
       isCancelled = true;
       setIsLoadingPhotos(false);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const userId = user?.id;
+
+    const loadAbout = async () => {
+      if (!userId) return;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select(
+          "occupation, education, city, hometown, height, show_occupation, show_education, show_city, show_hometown, show_height",
+        )
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (isCancelled || error || !data) return;
+
+      const next = data as ProfileAbout;
+      setProfileAbout(next);
+    };
+
+    void loadAbout();
+    return () => {
+      isCancelled = true;
     };
   }, [user?.id]);
 
@@ -400,6 +476,69 @@ export default function ProfileScreen() {
     }
   };
 
+  const saveProfileSettings = async () => {
+    if (!user?.id) return false;
+
+    const first = settingsFirstName.trim();
+    const last = settingsLastName.trim();
+    const displayName = `${first} ${last}`.trim();
+    const interested = settingsInterestedIn.join(", ");
+
+    const { error: profileError } = await supabase.from("profiles").upsert(
+      {
+        id: user.id,
+        display_name: displayName.length > 0 ? displayName : null,
+        occupation: settingsOccupation.trim() || null,
+        education: settingsEducation.trim() || null,
+        city: settingsCity.trim() || null,
+        hometown: settingsHometown.trim() || null,
+        height: settingsHeight.trim() || null,
+        show_occupation: showOccupation,
+        show_education: showEducation,
+        show_city: showCity,
+        show_hometown: showHometown,
+        show_height: showHeight,
+      },
+      { onConflict: "id" },
+    );
+    if (profileError) {
+      setErrorMessage(profileError.message);
+      return false;
+    }
+
+    const { error: metaError } = await supabase.auth.updateUser({
+      data: {
+        first_name: first,
+        last_name: last,
+        gender: settingsGender.trim(),
+        sexual_orientation: settingsSexualOrientation.trim(),
+        interested_in_seeing: interested,
+      },
+    });
+
+    if (metaError) {
+      setErrorMessage(metaError.message);
+      return false;
+    }
+
+    setFirstName(first);
+    setLastName(last);
+    setProfileAbout({
+      occupation: settingsOccupation.trim() || null,
+      education: settingsEducation.trim() || null,
+      city: settingsCity.trim() || null,
+      hometown: settingsHometown.trim() || null,
+      height: settingsHeight.trim() || null,
+      show_occupation: showOccupation,
+      show_education: showEducation,
+      show_city: showCity,
+      show_hometown: showHometown,
+      show_height: showHeight,
+    });
+
+    return true;
+  };
+
   const finalizeCloseSettings = async () => {
     const p = photoSavePromiseRef.current;
     const ok = p ? await p : true;
@@ -407,6 +546,8 @@ export default function ProfileScreen() {
       alertPhotosNotSaved();
       return;
     }
+    const saved = await saveProfileSettings();
+    if (!saved) return;
     setIsSettingsOpen(false);
     setPhotoDraftDirty(false);
     setErrorMessage("");
@@ -433,10 +574,12 @@ export default function ProfileScreen() {
       style={styles.scroll}
       contentContainerStyle={[
         styles.container,
-        { paddingBottom: Math.max(insets.bottom, 20) + 56 },
+        {
+          paddingBottom:
+            Math.max(insets.bottom, 12) + TAB_BAR_FLOAT_CLEARANCE + 16,
+        },
       ]}
       keyboardShouldPersistTaps={isSettingsOpen ? "always" : "handled"}
-      stickyHeaderIndices={isSettingsOpen ? [1] : undefined}
     >
       <View style={[styles.headerRow, { paddingTop: insets.top ? insets.top : 0 }]}>
         <View style={styles.headerLeft}>
@@ -548,6 +691,87 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.card}>
+            <Text style={styles.cardTitle}>Profile details</Text>
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Occupation</Text>
+              <TextInput
+                placeholder="Occupation"
+                placeholderTextColor={colors.mutedText}
+                style={styles.input}
+                value={settingsOccupation}
+                onChangeText={setSettingsOccupation}
+              />
+              <View style={styles.visibilityRow}>
+                <Text style={styles.visibilityLabel}>Show on profile</Text>
+                <Switch value={showOccupation} onValueChange={setShowOccupation} />
+              </View>
+            </View>
+
+            <View style={styles.preferenceDivider} />
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Education</Text>
+              <TextInput
+                placeholder="Education"
+                placeholderTextColor={colors.mutedText}
+                style={styles.input}
+                value={settingsEducation}
+                onChangeText={setSettingsEducation}
+              />
+              <View style={styles.visibilityRow}>
+                <Text style={styles.visibilityLabel}>Show on profile</Text>
+                <Switch value={showEducation} onValueChange={setShowEducation} />
+              </View>
+            </View>
+
+            <View style={styles.preferenceDivider} />
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>City</Text>
+              <TextInput
+                placeholder="City"
+                placeholderTextColor={colors.mutedText}
+                style={styles.input}
+                value={settingsCity}
+                onChangeText={setSettingsCity}
+              />
+              <View style={styles.visibilityRow}>
+                <Text style={styles.visibilityLabel}>Show on profile</Text>
+                <Switch value={showCity} onValueChange={setShowCity} />
+              </View>
+            </View>
+
+            <View style={styles.preferenceDivider} />
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Hometown</Text>
+              <TextInput
+                placeholder="Hometown"
+                placeholderTextColor={colors.mutedText}
+                style={styles.input}
+                value={settingsHometown}
+                onChangeText={setSettingsHometown}
+              />
+              <View style={styles.visibilityRow}>
+                <Text style={styles.visibilityLabel}>Show on profile</Text>
+                <Switch value={showHometown} onValueChange={setShowHometown} />
+              </View>
+            </View>
+
+            <View style={styles.preferenceDivider} />
+
+            <View style={styles.preferenceSection}>
+              <Text style={styles.preferenceSectionLabel}>Height</Text>
+              <HeightScrollPicker value={settingsHeight} onValueChange={setSettingsHeight} />
+              <View style={styles.visibilityRow}>
+                <Text style={styles.visibilityLabel}>Show on profile</Text>
+                <Switch value={showHeight} onValueChange={setShowHeight} />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.card}>
             <Text style={styles.cardTitle}>Account</Text>
 
             <View style={styles.preferenceSection}>
@@ -647,10 +871,6 @@ export default function ProfileScreen() {
 
           {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
           {infoMessage ? <Text style={styles.info}>{infoMessage}</Text> : null}
-
-          <Text style={[styles.logout, styles.logoutInSettings]} onPress={() => signOut()}>
-            Sign out
-          </Text>
         </View>
       ) : (
         <>
@@ -943,6 +1163,16 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     gap: 10,
   },
+  visibilityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  visibilityLabel: {
+    color: colors.mutedText,
+    fontFamily: typography.fontFamily,
+    fontSize: 13,
+  },
   preferenceSectionLabel: {
     color: colors.text,
     fontFamily: typography.fontFamily,
@@ -1006,10 +1236,6 @@ const styles = StyleSheet.create({
   logoutMain: {
     marginTop: 56,
     paddingVertical: 16,
-  },
-  logoutInSettings: {
-    marginTop: 28,
-    paddingVertical: 12,
   },
   error: {
     color: "#FF3B30",

@@ -16,6 +16,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Linking from "expo-linking";
 
+import { HeightScrollPicker } from "@/src/components/HeightScrollPicker";
+import { coerceHeightFtIn, DEFAULT_HEIGHT_FT_IN } from "@/src/lib/heightOptions";
 import { getImageUploadPayload } from "@/src/lib/getImageUploadPayload";
 import { supabase } from "@/src/lib/supabase";
 import { useAuth } from "@/src/providers/AuthProvider";
@@ -32,7 +34,12 @@ type Step =
   | "sexualOrientation"
   | "interestedIn"
   | "profilePicture" // legacy alias; render unified grid
-  | "profilePhotos6";
+  | "profilePhotos6"
+  | "occupation"
+  | "education"
+  | "city"
+  | "hometown"
+  | "height";
 
 const PHOTO_SLOT_COUNT = 6;
 const PHOTO_SLOTS = [1, 2, 3, 4, 5, 6] as const;
@@ -137,6 +144,11 @@ export default function SignUpScreen() {
   const [signupPhotoUris, setSignupPhotoUris] = useState<(string | null)[]>(() =>
     Array.from({ length: PHOTO_SLOT_COUNT }, () => null),
   );
+  const [occupation, setOccupation] = useState("");
+  const [education, setEducation] = useState("");
+  const [city, setCity] = useState("");
+  const [hometown, setHometown] = useState("");
+  const [height, setHeight] = useState<string>(DEFAULT_HEIGHT_FT_IN);
   const [isResuming, setIsResuming] = useState(false);
   const [hasHydratedResume, setHasHydratedResume] = useState(false);
   const [isPhotoSaving, setIsPhotoSaving] = useState(false);
@@ -353,15 +365,88 @@ export default function SignUpScreen() {
       return;
     }
 
-    // profilePhotos6 — mark onboarding complete (photos are persisted per-slot)
-    const filledCount = signupPhotoUris.filter((u) => u !== null).length;
-    if (filledCount < PHOTO_SLOT_COUNT) {
-      setErrorMessage("Please add a photo for all six slots.");
+    if (step === "profilePicture" || step === "profilePhotos6") {
+      const filledCount = signupPhotoUris.filter((u) => u !== null).length;
+      if (filledCount < PHOTO_SLOT_COUNT) {
+        setErrorMessage("Please add a photo for all six slots.");
+        return;
+      }
+
+      setIsSubmitting(true);
+      try {
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: {
+            has_uploaded_photos: true,
+            signup_step: "occupation",
+          },
+        });
+        if (metaError) throw new Error(metaError.message);
+        setStep("occupation");
+      } catch (e) {
+        setErrorMessage(e instanceof Error ? e.message : "Could not continue.");
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
+    if (step === "occupation") {
+      if (!occupation.trim()) return setErrorMessage("Please enter your occupation.");
+      setStep("education");
+      return;
+    }
+
+    if (step === "education") {
+      if (!education.trim()) return setErrorMessage("Please enter your education.");
+      setStep("city");
+      return;
+    }
+
+    if (step === "city") {
+      if (!city.trim()) return setErrorMessage("Please enter your city.");
+      setStep("hometown");
+      return;
+    }
+
+    if (step === "hometown") {
+      if (!hometown.trim()) return setErrorMessage("Please enter your hometown.");
+      setStep("height");
+      return;
+    }
+
+    if (!height.trim()) return setErrorMessage("Please select your height.");
+    if (!session.user?.id) return setErrorMessage("Please sign in again to continue your signup.");
+
+    const parsed = parseDob(dateOfBirthInput);
+    if (!parsed) return setErrorMessage("Please re-enter your date of birth.");
+    const age = calculateAge(parsed);
+
     setIsSubmitting(true);
     try {
+      const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+      const { error: profileError } = await supabase.from("profiles").upsert(
+        {
+          id: session.user.id,
+          display_name: displayName.length > 0 ? displayName : null,
+          age,
+          city: city.trim(),
+          gender: gender.trim(),
+          sexual_orientation: sexualOrientation.trim(),
+          interested_in_seeing: interestedInSelections.join(", "),
+          occupation: occupation.trim(),
+          education: education.trim(),
+          hometown: hometown.trim(),
+          height: height.trim(),
+          show_occupation: true,
+          show_education: true,
+          show_city: true,
+          show_hometown: true,
+          show_height: true,
+        },
+        { onConflict: "id" },
+      );
+      if (profileError) throw new Error(profileError.message);
+
       const { error: metaError } = await supabase.auth.updateUser({
         data: {
           has_completed_signup_profile: true,
@@ -406,6 +491,11 @@ export default function SignUpScreen() {
       if (prev === "sexualOrientation") return "gender";
       if (prev === "interestedIn") return "sexualOrientation";
       if (prev === "profilePhotos6") return "interestedIn";
+      if (prev === "occupation") return "profilePhotos6";
+      if (prev === "education") return "occupation";
+      if (prev === "city") return "education";
+      if (prev === "hometown") return "city";
+      if (prev === "height") return "hometown";
       return prev;
     });
   }, []);
@@ -441,7 +531,12 @@ export default function SignUpScreen() {
     (step === "sexualOrientation" && !sexualOrientation.trim()) ||
     (step === "interestedIn" && interestedInSelections.length === 0) ||
     ((step === "profilePicture" || step === "profilePhotos6") &&
-      signupPhotoUris.filter((u) => u !== null).length < PHOTO_SLOT_COUNT);
+      signupPhotoUris.filter((u) => u !== null).length < PHOTO_SLOT_COUNT) ||
+    (step === "occupation" && !occupation.trim()) ||
+    (step === "education" && !education.trim()) ||
+    (step === "city" && !city.trim()) ||
+    (step === "hometown" && !hometown.trim()) ||
+    (step === "height" && !height.trim());
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -518,6 +613,11 @@ export default function SignUpScreen() {
           .select("slot_index, storage_path")
           .eq("user_id", userId)
           .order("slot_index", { ascending: true });
+        const { data: profileRow } = await supabase
+          .from("profiles")
+          .select("occupation, education, city, hometown, height")
+          .eq("id", userId)
+          .maybeSingle();
 
         const rows = photoRows ?? [];
         const nextUris: (string | null)[] = Array.from(
@@ -547,6 +647,12 @@ export default function SignUpScreen() {
         if (cancelled) return;
 
         setSignupPhotoUris(nextUris);
+        const photoCount = rows.filter((r) => typeof r.storage_path === "string").length;
+        setOccupation((profileRow?.occupation as string | null) ?? "");
+        setEducation((profileRow?.education as string | null) ?? "");
+        setCity((profileRow?.city as string | null) ?? "");
+        setHometown((profileRow?.hometown as string | null) ?? "");
+        setHeight(coerceHeightFtIn((profileRow?.height as string | null) ?? ""));
 
         if (!first || !last) {
           setStep("name");
@@ -558,6 +664,18 @@ export default function SignUpScreen() {
           setStep("sexualOrientation");
         } else if (interestedParsed.length === 0) {
           setStep("interestedIn");
+        } else if (photoCount < PHOTO_SLOT_COUNT) {
+          setStep("profilePhotos6");
+        } else if (!profileRow?.occupation) {
+          setStep("occupation");
+        } else if (!profileRow?.education) {
+          setStep("education");
+        } else if (!profileRow?.city) {
+          setStep("city");
+        } else if (!profileRow?.hometown) {
+          setStep("hometown");
+        } else if (!profileRow?.height) {
+          setStep("height");
         } else {
           setStep("profilePhotos6");
         }
@@ -917,6 +1035,65 @@ export default function SignUpScreen() {
         </View>
       ) : null}
 
+      {step === "occupation" ? (
+        <View style={{ gap: 12 }}>
+          <Text style={styles.label}>Occupation</Text>
+          <TextInput
+            placeholder="What do you do?"
+            placeholderTextColor={colors.mutedText}
+            style={styles.input}
+            value={occupation}
+            onChangeText={setOccupation}
+          />
+        </View>
+      ) : null}
+
+      {step === "education" ? (
+        <View style={{ gap: 12 }}>
+          <Text style={styles.label}>Education</Text>
+          <TextInput
+            placeholder="School or highest education"
+            placeholderTextColor={colors.mutedText}
+            style={styles.input}
+            value={education}
+            onChangeText={setEducation}
+          />
+        </View>
+      ) : null}
+
+      {step === "city" ? (
+        <View style={{ gap: 12 }}>
+          <Text style={styles.label}>City you live in</Text>
+          <TextInput
+            placeholder="City"
+            placeholderTextColor={colors.mutedText}
+            style={styles.input}
+            value={city}
+            onChangeText={setCity}
+          />
+        </View>
+      ) : null}
+
+      {step === "hometown" ? (
+        <View style={{ gap: 12 }}>
+          <Text style={styles.label}>Hometown</Text>
+          <TextInput
+            placeholder="Where you grew up"
+            placeholderTextColor={colors.mutedText}
+            style={styles.input}
+            value={hometown}
+            onChangeText={setHometown}
+          />
+        </View>
+      ) : null}
+
+      {step === "height" ? (
+        <View style={{ gap: 12 }}>
+          <Text style={styles.label}>Height</Text>
+          <HeightScrollPicker value={height} onValueChange={setHeight} />
+        </View>
+      ) : null}
+
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       {step !== "verifyEmail" && infoMessage ? (
         <Text style={styles.info}>{infoMessage}</Text>
@@ -931,7 +1108,7 @@ export default function SignUpScreen() {
             <ActivityIndicator color={colors.text} />
           ) : (
             <Text style={styles.buttonText}>
-              {step === "profilePicture" || step === "profilePhotos6" ? "Finish" : "Continue"}
+              {step === "height" ? "Finish" : "Continue"}
             </Text>
           )}
         </Pressable>
