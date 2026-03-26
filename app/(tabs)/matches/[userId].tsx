@@ -64,8 +64,17 @@ export default function MatchProfileScreen() {
           (row.user_a === partnerId && row.user_b === me),
       );
 
+      let hasMissedConnection = false;
       if (!hasMatch) {
-        setErrorMessage('You can only view profiles of people you have matched with.');
+        const { data: missed, error: missedError } = await supabase.rpc('has_missed_connection', {
+          p_other_user_id: partnerId,
+        });
+        if (missedError) throw missedError;
+        hasMissedConnection = Boolean(missed);
+      }
+
+      if (!hasMatch && !hasMissedConnection) {
+        setErrorMessage('You can only view profiles of people you have matched with (or met via a missed connection).');
         setIsLoading(false);
         return;
       }

@@ -7,6 +7,8 @@ import { useAuth } from '@/src/providers/AuthProvider';
 import { colors } from '@/src/theme/colors';
 import { typography } from '@/src/theme/typography';
 
+type Segment = 'matches' | 'connections';
+
 type ChatListItem = {
   matchId: string;
   partnerName: string;
@@ -15,6 +17,17 @@ type ChatListItem = {
   relativeTime: string;
   hasUnreadIndicator: boolean;
   lastMessageAt: string | null;
+};
+
+type MissedConnection = {
+  otherUserId: string;
+  displayName: string;
+  age: number | null;
+  avatarUrl: string | null;
+  businessName: string;
+  category: string | null;
+  description: string | null;
+  claimDate: string; // YYYY-MM-DD
 };
 
 function getErrorMessage(error: unknown) {
@@ -51,12 +64,22 @@ function formatRelativeTime(isoTime: string | null): string {
   return `${Math.floor(diffMs / day)}d ago`;
 }
 
+function formatClaimDate(isoDate: string): string {
+  const parsed = new Date(`${isoDate}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return isoDate;
+  return parsed.toLocaleDateString();
+}
+
 export default function ChatScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const [activeSegment, setActiveSegment] = useState<Segment>('matches');
   const [chats, setChats] = useState<ChatListItem[]>([]);
+  const [missedConnections, setMissedConnections] = useState<MissedConnection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingConnections, setIsLoadingConnections] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [connectionsError, setConnectionsError] = useState('');
 
   const loadChats = useCallback(async () => {
     if (!user) {
@@ -206,6 +229,66 @@ export default function ChatScreen() {
     }
   }, [user]);
 
+  const loadMissedConnections = useCallback(async () => {
+    if (!user) {
+      setMissedConnections([]);
+      setIsLoadingConnections(false);
+      return;
+    }
+
+    setIsLoadingConnections(true);
+    setConnectionsError('');
+
+    try {
+      const { data, error } = await supabase.rpc('get_missed_connections');
+      if (error) throw error;
+
+      const rows = (data ?? []) as Array<{
+        other_user_id: string;
+        display_name: string | null;
+        age: number | null;
+        photo_storage_path: string | null;
+        business_name: string | null;
+        category: string | null;
+        description: string | null;
+        claim_date: string;
+      }>;
+
+      const avatarUrlByUserId = new Map<string, string>();
+      await Promise.all(
+        rows
+          .filter((r) => typeof r.photo_storage_path === 'string' && r.photo_storage_path.length > 0)
+          .map(async (row) => {
+            const storagePath = row.photo_storage_path as string;
+            const { data: signed, error: signErr } = await supabase.storage
+              .from('profile-photos')
+              .createSignedUrl(storagePath, 60 * 60);
+            if (!signErr && signed?.signedUrl) {
+              avatarUrlByUserId.set(row.other_user_id, signed.signedUrl);
+            }
+          }),
+      );
+
+      setMissedConnections(
+        rows.map((row) => ({
+          otherUserId: row.other_user_id,
+          displayName: (row.display_name ?? 'Member').trim() || 'Member',
+          age: row.age ?? null,
+          avatarUrl: avatarUrlByUserId.get(row.other_user_id) ?? null,
+          businessName: (row.business_name ?? 'Event').trim() || 'Event',
+          category: row.category ?? null,
+          description: row.description ?? null,
+          claimDate: row.claim_date,
+        })),
+      );
+    } catch (e) {
+      setConnectionsError(getErrorMessage(e));
+      setMissedConnections([]);
+    } finally {
+      setIsLoadingConnections(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     loadChats();
   }, [loadChats]);
@@ -213,8 +296,9 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       loadChats();
+      void loadMissedConnections();
       return undefined;
-    }, [loadChats]),
+    }, [loadChats, loadMissedConnections]),
   );
 
   useEffect(() => {
@@ -286,58 +370,140 @@ export default function ChatScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Messages</Text>
       <View style={styles.segmentedRow}>
-        <View style={[styles.segmentPill, styles.segmentPillActive]}>
-          <Text style={[styles.segmentText, styles.segmentTextActive]}>Matches</Text>
-        </View>
-        <View style={styles.segmentPill}>
-          <Text style={styles.segmentText}>Connections</Text>
-        </View>
-      </View>
-      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-      {chats.length === 0 ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>No chats yet</Text>
-          <Text style={styles.cardBody}>
-            When two users like each other, a chat is created automatically and listed here.
+        <Pressable
+          style={[styles.segmentPill, activeSegment === 'matches' && styles.segmentPillActive]}
+          onPress={() => setActiveSegment('matches')}
+          accessibilityRole="button"
+          accessibilityLabel="Show matches"
+        >
+          <Text style={[styles.segmentText, activeSegment === 'matches' && styles.segmentTextActive]}>
+            Matches
           </Text>
-          <Pressable style={styles.refreshButton} onPress={loadChats}>
-            <Text style={styles.refreshButtonText}>Refresh chats</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <FlatList
-          data={chats}
-          keyExtractor={(item) => item.matchId}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
-            <Pressable
-              style={styles.chatRow}
-              onPress={() => router.push(`/chat/${item.matchId}` as never)}>
-              {item.avatarUrl ? (
-                <Image source={{ uri: item.avatarUrl }} style={styles.avatar} resizeMode="cover" />
-              ) : (
-                <View style={[styles.avatar, styles.avatarFallback]}>
-                  <Text style={styles.avatarFallbackText}>
-                    {(item.partnerName[0] ?? '?').toUpperCase()}
-                  </Text>
-                </View>
+        </Pressable>
+        <Pressable
+          style={[styles.segmentPill, activeSegment === 'connections' && styles.segmentPillActive]}
+          onPress={() => setActiveSegment('connections')}
+          accessibilityRole="button"
+          accessibilityLabel="Show connections"
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              activeSegment === 'connections' && styles.segmentTextActive,
+            ]}
+          >
+            Connections
+          </Text>
+        </Pressable>
+      </View>
+      {activeSegment === 'matches' ? (
+        <>
+          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          {chats.length === 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>No chats yet</Text>
+              <Text style={styles.cardBody}>
+                When two users like each other, a chat is created automatically and listed here.
+              </Text>
+              <Pressable style={styles.refreshButton} onPress={loadChats}>
+                <Text style={styles.refreshButtonText}>Refresh chats</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <FlatList
+              data={chats}
+              keyExtractor={(item) => item.matchId}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.listContent}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={styles.chatRow}
+                  onPress={() => router.push(`/chat/${item.matchId}` as never)}>
+                  {item.avatarUrl ? (
+                    <Image
+                      source={{ uri: item.avatarUrl }}
+                      style={styles.avatar}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={[styles.avatar, styles.avatarFallback]}>
+                      <Text style={styles.avatarFallbackText}>
+                        {(item.partnerName[0] ?? '?').toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.chatBody}>
+                    <Text style={styles.chatName} numberOfLines={1}>
+                      {item.partnerName}
+                    </Text>
+                    <Text style={styles.chatPreview} numberOfLines={1}>
+                      {item.lastMessage}
+                    </Text>
+                  </View>
+                  <View style={styles.chatMeta}>
+                    {item.relativeTime ? (
+                      <Text style={styles.chatTime}>{item.relativeTime}</Text>
+                    ) : null}
+                    {item.hasUnreadIndicator ? <View style={styles.unreadDot} /> : null}
+                  </View>
+                </Pressable>
               )}
-              <View style={styles.chatBody}>
-                <Text style={styles.chatName} numberOfLines={1}>
-                  {item.partnerName}
-                </Text>
-                <Text style={styles.chatPreview} numberOfLines={1}>
-                  {item.lastMessage}
-                </Text>
-              </View>
-              <View style={styles.chatMeta}>
-                {item.relativeTime ? <Text style={styles.chatTime}>{item.relativeTime}</Text> : null}
-                {item.hasUnreadIndicator ? <View style={styles.unreadDot} /> : null}
-              </View>
-            </Pressable>
+            />
           )}
-        />
+        </>
+      ) : (
+        <>
+          {connectionsError ? <Text style={styles.errorText}>{connectionsError}</Text> : null}
+          {isLoadingConnections ? (
+            <View style={styles.centerInline}>
+              <ActivityIndicator color={colors.text} />
+            </View>
+          ) : missedConnections.length === 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>No missed connections yet</Text>
+              <Text style={styles.cardBody}>
+                View other people who attended the same IRL event that you might've missed.
+              </Text>
+              <Pressable style={styles.refreshButton} onPress={loadMissedConnections}>
+                <Text style={styles.refreshButtonText}>Refresh connections</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <FlatList
+              data={missedConnections}
+              keyExtractor={(item) => `${item.otherUserId}-${item.claimDate}`}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.listContent}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={styles.chatRow}
+                  onPress={() => router.push(`/(tabs)/matches/${item.otherUserId}`)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View ${item.displayName}'s profile`}
+                >
+                  {item.avatarUrl ? (
+                    <Image source={{ uri: item.avatarUrl }} style={styles.avatar} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.avatar, styles.avatarFallback]}>
+                      <Text style={styles.avatarFallbackText}>
+                        {(item.displayName[0] ?? '?').toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.chatBody}>
+                    <Text style={styles.chatName} numberOfLines={1}>
+                      {item.displayName}
+                      {item.age != null ? `, ${item.age}` : ''}
+                    </Text>
+                    <Text style={styles.chatPreview} numberOfLines={1}>
+                      {item.businessName} • {formatClaimDate(item.claimDate)}
+                    </Text>
+                  </View>
+                </Pressable>
+              )}
+            />
+          )}
+        </>
       )}
     </View>
   );
@@ -353,6 +519,11 @@ const styles = StyleSheet.create({
   center: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  centerInline: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
   },
   title: {
     color: colors.text,

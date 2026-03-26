@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -90,6 +90,7 @@ export default function ExploreScreen() {
   }, [interestedInSeeingRaw]);
 
   const activeProfile = useMemo(() => profiles[currentIndex] ?? null, [currentIndex, profiles]);
+  const profileScrollRef = useRef<ScrollView>(null);
 
   /** Stable primitive dep so the signed-URL effect tracks path changes without fragile object identity. */
   const activeUserPhotoPathsKey = useMemo(() => {
@@ -278,6 +279,11 @@ export default function ExploreScreen() {
     };
   }, [activeProfile?.id, activeUserPhotoPathsKey]);
 
+  useLayoutEffect(() => {
+    if (!activeProfile?.id) return;
+    profileScrollRef.current?.scrollTo({ x: 0, y: 0, animated: false });
+  }, [activeProfile?.id]);
+
   const heroPhotoUri = signedPhotoUrls[0] ?? null;
   const secondaryPhotoUrlsForCard = signedPhotoUrls.slice(1, PHOTO_SLOT_COUNT);
 
@@ -386,6 +392,7 @@ export default function ExploreScreen() {
       {activeProfile ? (
         <>
           <ScrollView
+            ref={profileScrollRef}
             style={styles.scroll}
             contentContainerStyle={[styles.scrollContent, { paddingBottom: scrollBottomPadding }]}
             showsVerticalScrollIndicator={false}
