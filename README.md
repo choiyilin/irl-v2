@@ -1,75 +1,82 @@
-# IRL (In Real Love)
+# IRL
 
-Mobile dating app MVP built with Expo Router + Supabase.
-
-## Stack
-
-- Expo (React Native, TypeScript)
-- Expo Router
-- Supabase Auth + Postgres + Realtime
-
-## Design Defaults
-
-- Primary background: `#FFFFFF`
-- Accent/surface: `#FFB6C1`
-- Text: `#000000`
-- Typeface: Neue Haas Grotesk (with safe platform fallbacks)
+Expo (React Native) app using Expo Router and Supabase. Use the steps below to install dependencies, configure env, and run the dev server.
 
 ## Prerequisites
 
-- Node.js 20+
-- Expo Go app on iOS/Android
-- Supabase project
+- **Node.js** 20 or newer (LTS recommended)
+- **npm** (comes with Node)
+- **Expo Go** on a physical phone ([iOS](https://apps.apple.com/app/expo-go/id982107779) / [Android](https://play.google.com/store/apps/details?id=host.exp.exponent)) if you want to run on device via QR code
+- For **iOS Simulator**: Xcode (macOS only)
+- For **Android Emulator**: Android Studio + an AVD
 
-## Environment
+## 1. Install
 
-Copy `env.example` to `.env` and fill in values:
+Clone the repository, `cd` into it, then:
+
+```bash
+npm install
+```
+
+## 2. Environment
+
+Create a `.env` file in the project root (Expo loads `EXPO_PUBLIC_*` variables automatically):
 
 ```bash
 cp env.example .env
 ```
 
-Required variables:
+Edit `.env` and set:
 
-- `EXPO_PUBLIC_SUPABASE_URL`
-- `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+| Variable | Description |
+|----------|-------------|
+| `EXPO_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Your Supabase anon (public) key |
 
-## Run Locally
+Apply the SQL in `supabase/migrations/` to your Supabase project so the app’s tables and RPCs exist.
 
-```bash
-npm install
-npm run start
-```
+## 3. Launch (development)
 
-Then scan the QR code in Expo Go.
-
-## Quality Checks
+Start the Expo dev server:
 
 ```bash
-npm run typecheck
-npm run lint
+npm start
 ```
 
-## Supabase Schema
+Then:
 
-Initial migration file:
+- **Physical device**: open the Camera app (iOS) or Expo Go (Android), scan the QR code from the terminal or Dev Tools page.
+- **iOS Simulator** (macOS): press `i` in the terminal or run:
 
-- `supabase/migrations/0001_initial.sql`
+  ```bash
+  npm run ios
+  ```
 
-It creates:
+- **Android Emulator**: start an emulator, then press `a` in the terminal or run:
 
-- `profiles`
-- `business_promotions`
-- `chat_rooms`
-- `chat_room_members`
-- `chat_messages`
+  ```bash
+  npm run android
+  ```
 
-with baseline RLS policies for authenticated access.
+- **Web**:
 
-## Current App Sections
+  ```bash
+  npm run web
+  ```
 
-- `Explore`: profile feed placeholder
-- `Discovery`: nearby date-promo placeholder
-- `Chat`: live-chat placeholder
-- `Profile`: account/settings placeholder + sign out
+If Metro shows a stale bundle, restart with a clean cache:
 
+```bash
+npx expo start -c
+```
+
+## Scripts
+
+| Command | Purpose |
+|---------|---------|
+| `npm start` | Dev server (Expo) |
+| `npm run ios` | Open in iOS Simulator |
+| `npm run android` | Open in Android emulator |
+| `npm run web` | Open in browser |
+| `npm run typecheck` | TypeScript check |
+| `npm run lint` | ESLint (Expo config) |
