@@ -1,0 +1,7 @@
+appId: com.irl.app
+name: See a missed connection
+---
+- runFlow: sign-in.yaml
+- tapOn: "Matches"
+- tapOn: "Missed connections"
+- assertVisible: "Missed connections"

@@ -1,0 +1,13 @@
+appId: com.irl.app
+name: Like → match → first message
+---
+- runFlow: sign-in.yaml
+- assertVisible: "Explore"
+- tapOn: "Like"
+# Match modal expected; tap to open chat
+- tapOn: "Send a message"
+- inputText:
+    label: "Message"
+    text: "Hello from Maestro"
+- tapOn: "Send"
+- assertVisible: "Hello from Maestro"

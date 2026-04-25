@@ -1,0 +1,10 @@
+appId: com.irl.app
+name: Claim a promotion
+---
+- runFlow: sign-in.yaml
+- tapOn: "Discovery"
+- assertVisible: "Discover"
+- tapOn:
+    text: "Test Bar"
+- tapOn: "Claim Deal"
+- assertVisible: "Claimed"

@@ -1,0 +1,14 @@
+appId: com.irl.app
+name: Sign in — existing user
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Welcome back"
+- inputText:
+    label: "Email"
+    text: ${MAESTRO_TEST_USER_EMAIL}
+- inputText:
+    label: "Password"
+    text: ${MAESTRO_TEST_USER_PASSWORD}
+- tapOn: "Sign in"
+- assertVisible: "Explore"

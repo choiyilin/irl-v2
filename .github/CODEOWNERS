@@ -1,0 +1,10 @@
+# Default: every change is reviewed by a maintainer.
+*                       @irl/maintainers
+
+# Coverage-ignore patterns: changes here require explicit ownership review,
+# because they reduce test surface.
+jest.config.js          @irl/maintainers
+src/api/supabase/types.generated.ts @irl/maintainers
+
+# Migrations are append-only; only DB owners can add/modify.
+supabase/migrations/    @irl/db-owners

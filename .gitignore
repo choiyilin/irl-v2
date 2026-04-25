@@ -1,0 +1,30 @@
+node_modules/
+.expo/
+dist/
+coverage/
+.DS_Store
+*.log
+
+# Env
+.env
+.env.*
+!env.example
+
+# Build artefacts
+ios/
+android/
+*.ipa
+*.apk
+
+# IDE
+.idea/
+*.swp
+
+# Tooling caches
+.eslintcache
+.prettiercache
+.stryker-tmp/
+reports/
+
+# Generated coverage / test output
+junit.xml
